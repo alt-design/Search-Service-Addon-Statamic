@@ -1,0 +1,40 @@
+{
+    "name": "alt-design/search-service",
+    "description": "Statamic addon for the Alt Search Service",
+    "autoload": {
+        "psr-4": {
+            "AltDesign\\SearchService\\": "src"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "AltDesign\\SearchService\\Tests\\": "tests"
+        }
+    },
+    "require": {
+        "statamic/cms": "^6.0"
+    },
+    "require-dev": {
+        "orchestra/testbench": "^10.8 || ^11.0",
+        "pestphp/pest": "^3.8 || ^4.0"
+    },
+    "config": {
+        "allow-plugins": {
+            "pixelfear/composer-dist-plugin": true,
+            "pestphp/pest-plugin": true
+        }
+    },
+    "extra": {
+        "statamic": {
+            "name": "Search Service",
+            "description": "Search Service addon"
+        },
+        "laravel": {
+            "providers": [
+                "AltDesign\\SearchService\\ServiceProvider"
+            ]
+        }
+    },
+    "minimum-stability": "dev",
+    "prefer-stable": true
+}
