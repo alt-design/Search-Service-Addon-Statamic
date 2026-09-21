@@ -45,7 +45,7 @@ it('returns the document an entry sends without running it', function () {
         ->assertOk()
         ->assertExactJson([
             'reference' => 'about',
-            'fields' => ['title' => 'About', 'content' => json_encode($this->bard), 'featured' => '1'],
+            'fields' => ['pages.title' => 'About', 'pages.content' => json_encode($this->bard), 'pages.featured' => '1'],
         ]);
 
     Http::assertNothingSent();
@@ -69,7 +69,7 @@ it('runs the entry through the pipeline and returns the result', function () {
     expect($request->url())->toBe('https://search.test/api/evaluate')
         ->and($request->data())->toBe([
             'reference' => 'about',
-            'fields' => ['title' => 'About', 'content' => json_encode($this->bard), 'featured' => '1'],
+            'fields' => ['pages.title' => 'About', 'pages.content' => json_encode($this->bard), 'pages.featured' => '1'],
         ]);
 });
 

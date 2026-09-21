@@ -28,7 +28,10 @@ class ServiceProvider extends AddonServiceProvider
 
         Permission::extend(fn () => Permission::register('view search-service', fn ($permission) => $permission
             ->label('View Search Service')
-            ->children([Permission::make('edit search-service pipeline')->label('Edit Pipeline')])));
+            ->children([
+            Permission::make('edit search-service fields')->label('Edit Fields'),
+            Permission::make('edit search-service pipeline')->label('Edit Pipeline'),
+        ])));
 
         Nav::extend(fn ($nav) => $nav->tools('Search Service')
             ->route('search-service.index')
@@ -36,6 +39,7 @@ class ServiceProvider extends AddonServiceProvider
             ->can('view search-service')
             ->children([
                 'Status' => cp_route('search-service.index'),
+                'Fields' => cp_route('search-service.fields.edit'),
                 'Pipeline' => cp_route('search-service.pipeline.edit'),
                 'Test Pipeline' => cp_route('search-service.test'),
             ]));
