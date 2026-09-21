@@ -1,6 +1,8 @@
 /logs
 /reference
 /vendor
+/node_modules
+/resources/dist/hot
 composer.lock
 .phpunit.cache
 .phpunit.result.cache

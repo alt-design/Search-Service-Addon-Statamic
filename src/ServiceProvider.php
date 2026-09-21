@@ -13,6 +13,11 @@ class ServiceProvider extends AddonServiceProvider
         'cp' => __DIR__.'/../routes/cp.php',
     ];
 
+    protected $vite = [
+        'input' => ['resources/js/addon.js'],
+        'publicDirectory' => 'resources/dist',
+    ];
+
     public function bootAddon()
     {
         // Pre-authenticated client for the search service API: Http::searchService()->get('search', [...])
@@ -32,6 +37,7 @@ class ServiceProvider extends AddonServiceProvider
             ->children([
                 'Status' => cp_route('search-service.index'),
                 'Pipeline' => cp_route('search-service.pipeline.edit'),
+                'Test Pipeline' => cp_route('search-service.test'),
             ]));
 
         $this->registerSettingsBlueprint(function () {
