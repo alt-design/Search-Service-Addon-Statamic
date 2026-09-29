@@ -33,7 +33,7 @@ class Fields
                 'field' => [
                     'type' => 'replicator',
                     'display' => 'Collections',
-                    'instructions' => 'Only the fields listed here are indexed, and a field weighted higher ranks its matches higher. Removing a field, or a whole collection, deletes the values already stored for it on every entry, and only a full reindex brings them back.',
+                    'instructions' => 'Only the fields listed here are indexed, and a field weighted higher ranks its matches higher. Toggling a field, or a whole collection, off pauses it instantly and can be undone just as fast, with nothing to reindex. Removing a field or a collection is different: it deletes the values already stored for it on every entry, and only a full reindex brings them back.',
                     'collapse' => 'accordion',
                     'button_label' => 'Add collection',
                     'previews' => false,
@@ -44,9 +44,10 @@ class Fields
     }
 
     /**
-     * API field list to editor values, grouped into a panel per collection.
+     * API field list to editor values, grouped into a panel per collection. A field the
+     * service sends with no enabled key predates the flag and counts as enabled.
      *
-     * @param  list<array{field: string, weight: int}>  $fields
+     * @param  list<array{field: string, weight: int, enabled?: bool}>  $fields
      */
     public static function toValues(array $fields): array
     {
@@ -64,6 +65,7 @@ class Fields
                 'fields' => $group->map(fn (array $field) => [
                     'field' => $set === static::ORPHANED ? $field['field'] : Str::after($field['field'], '.'),
                     'weight' => $field['weight'],
+                    'enabled' => $field['enabled'] ?? true,
                 ])->values()->all(),
             ])
             ->values()
@@ -71,20 +73,25 @@ class Fields
     }
 
     /**
-     * Processed editor values to an API field list. A disabled panel is dropped, which the
-     * editor's instructions warn deletes its stored values, because the service has no
-     * paused state: a field either has a config or has nothing stored.
+     * Processed editor values to an API field list. Every field configured here is sent to
+     * the service regardless of its toggle, since disabling one only pauses it: the service
+     * keeps indexing it but leaves it out of search until it is switched back on. A disabled
+     * panel overrides its rows, pausing all of them no matter how each is set individually.
      *
-     * @return list<array{field: string, weight: int}>
+     * @return list<array{field: string, weight: int, enabled: bool}>
      */
     public static function toFields(array $values): array
     {
         return collect($values['collections'] ?? [])
-            ->filter(fn (array $set) => $set['enabled'] ?? true)
-            ->flatMap(fn (array $set) => collect($set['fields'] ?? [])->map(fn (array $row) => [
-                'field' => $set['type'] === static::ORPHANED ? $row['field'] : "{$set['type']}.{$row['field']}",
-                'weight' => (int) $row['weight'],
-            ]))
+            ->flatMap(function (array $set) {
+                $panelEnabled = $set['enabled'] ?? true;
+
+                return collect($set['fields'] ?? [])->map(fn (array $row) => [
+                    'field' => $set['type'] === static::ORPHANED ? $row['field'] : "{$set['type']}.{$row['field']}",
+                    'weight' => (int) $row['weight'],
+                    'enabled' => $panelEnabled && ($row['enabled'] ?? true),
+                ]);
+            })
             ->values()
             ->all();
     }
@@ -138,6 +145,14 @@ class Fields
                             'max' => 100,
                             'step' => 1,
                             'default' => 1,
+                        ],
+                    ],
+                    [
+                        'handle' => 'enabled',
+                        'field' => [
+                            'type' => 'toggle',
+                            'display' => 'Enabled',
+                            'default' => true,
                         ],
                     ],
                 ],
