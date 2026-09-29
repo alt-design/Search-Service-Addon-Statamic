@@ -25,6 +25,29 @@ class Fields
      */
     public const ORPHANED = '_orphaned';
 
+    /**
+     * Field types worth indexing, being the ones holding words rather than structure.
+     */
+    private const INDEXABLE_TYPES = ['text', 'textarea', 'markdown', 'bard', 'taggable'];
+
+    /**
+     * Weights by handle, for the handles that conventionally mean something. A field not
+     * listed here starts at 1, which is the weight a body of text deserves next to a
+     * title.
+     *
+     * @var array<string, int>
+     */
+    private const SUGGESTED_WEIGHTS = [
+        'title' => 50,
+        'standfirst' => 10,
+        'strapline' => 10,
+        'intro' => 10,
+        'summary' => 10,
+        'excerpt' => 10,
+        'description' => 10,
+        'tags' => 6,
+    ];
+
     public static function blueprint(): FieldsBlueprint
     {
         return Blueprint::make('search-service-fields')->setContents([
@@ -101,7 +124,7 @@ class Fields
         $collections = Collection::all()->mapWithKeys(fn (EntryCollection $collection) => [
             $collection->handle() => [
                 'display' => $collection->title(),
-                'fields' => [static::grid(static::fieldOptions($collection))],
+                'fields' => [static::grid(static::fieldOptions($collection), static::suggestedRows($collection))],
             ],
         ])->all();
 
@@ -110,7 +133,7 @@ class Fields
             static::ORPHANED => [
                 'display' => 'Other fields',
                 'instructions' => 'Fields configured on the search service that belong to no collection here, usually because the collection was deleted. Remove one to stop it being indexed.',
-                'fields' => [static::grid(null)],
+                'fields' => [static::grid(null, [])],
             ],
         ];
     }
@@ -118,8 +141,13 @@ class Fields
     /**
      * Null options means the field name is typed rather than picked, which is the only
      * option when there is no blueprint to read it from.
+     *
+     * The default rows are what a collection arrives with when it is added, so onboarding
+     * one is a case of adjusting a sensible list rather than building it from nothing.
+     *
+     * @param  array<int, array{field: string, weight: int, enabled: bool}>  $rows
      */
-    private static function grid(?array $options): array
+    private static function grid(?array $options, array $rows): array
     {
         return [
             'handle' => 'fields',
@@ -129,6 +157,7 @@ class Fields
                 'mode' => 'table',
                 'add_row' => 'Add field',
                 'min_rows' => 1,
+                'default' => $rows,
                 'fields' => [
                     [
                         'handle' => 'field',
@@ -158,6 +187,27 @@ class Fields
                 ],
             ],
         ];
+    }
+
+    /**
+     * The fields a collection is worth indexing, with a weight taken from what the handle
+     * usually means. Only field types holding prose or keywords are included: an asset, a
+     * toggle or a date has nothing a visitor would search for.
+     *
+     * @return array<int, array{field: string, weight: int, enabled: bool}>
+     */
+    private static function suggestedRows(EntryCollection $collection): array
+    {
+        return $collection->entryBlueprints()
+            ->flatMap(fn (FieldsBlueprint $blueprint) => $blueprint->fields()->all())
+            ->filter(fn ($field): bool => in_array($field->type(), static::INDEXABLE_TYPES, true))
+            ->map(fn ($field): array => [
+                'field' => $field->handle(),
+                'weight' => static::SUGGESTED_WEIGHTS[$field->handle()] ?? 1,
+                'enabled' => true,
+            ])
+            ->values()
+            ->all();
     }
 
     /**

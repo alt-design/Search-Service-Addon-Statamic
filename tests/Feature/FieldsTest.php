@@ -255,3 +255,18 @@ it('queues no index when the service rejects the save', function () {
 
     Queue::assertNotPushed(SyncCollection::class);
 });
+
+it('prefills a new collection panel with the fields worth indexing', function () {
+    Http::fake(['search.test/api/fields' => Http::response(['fields' => []])]);
+
+    $response = $this->getJson(cp_route('search-service.fields.edit'))->assertOk();
+
+    $sets = collect($response->json('blueprint.tabs.0.sections.0.fields.0.sets'))
+        ->flatMap(fn ($group) => $group['sets'] ?? [])
+        ->keyBy('handle');
+
+    expect($sets['articles']['fields'][0]['default'])->toBe([
+        ['field' => 'title', 'weight' => 50, 'enabled' => true],
+        ['field' => 'content', 'weight' => 1, 'enabled' => true],
+    ])->and($sets['_orphaned']['fields'][0]['default'])->toBe([]);
+});
