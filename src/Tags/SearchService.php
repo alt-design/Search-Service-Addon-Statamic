@@ -16,9 +16,12 @@ class SearchService extends Tags
     /**
      * {{ search_service:results q="" limit="10" }} ... {{ /search_service:results }}
      *
-     * With paginate="10" the entries move into {{ results }} and a {{ paginate }} array
-     * appears alongside them, which is how the core collection tag behaves. The page comes
-     * from ?page= in the query string.
+     * The entries always live in {{ results }}, alongside {{ match }} reporting which tier
+     * answered the query (exact, prefix, corrected, partial or none), {{ corrected }} giving
+     * the corrected query string when match is corrected and null otherwise, and the
+     * {{ no_results }} and {{ total_results }} variables the core collection tag also
+     * exposes. With paginate="10" a {{ paginate }} array appears as well, which is how the
+     * core collection tag behaves. The page comes from ?page= in the query string.
      */
     public function results(): mixed
     {
@@ -39,7 +42,16 @@ class SearchService extends Tags
     {
         $result = Search::query($query, $this->clamp($this->params->int('limit', 10)));
 
-        return $result === null ? [] : $this->output($result['results']);
+        if ($result === null) {
+            return [];
+        }
+
+        $as = $this->getPaginationResultsKey();
+
+        return array_merge(
+            [$as => $result['results'], 'match' => $result['match'], 'corrected' => $result['corrected']],
+            $this->extraOutput($result['results']),
+        );
     }
 
     /**
@@ -56,13 +68,15 @@ class SearchService extends Tags
             return [];
         }
 
-        return $this->output(new LengthAwarePaginator(
+        $output = $this->output(new LengthAwarePaginator(
             $result['results'],
             $result['total'],
             $perPage,
             $page,
             ['path' => LengthAwarePaginator::resolveCurrentPath()],
         ));
+
+        return array_merge($output, ['match' => $result['match'], 'corrected' => $result['corrected']]);
     }
 
     /**

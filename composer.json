@@ -1,6 +1,12 @@
 {
     "name": "alt-design/search-service",
     "description": "Statamic addon for the Alt Search Service",
+    "license": "MIT",
+    "keywords": [
+        "statamic",
+        "statamic-addon",
+        "search"
+    ],
     "autoload": {
         "psr-4": {
             "AltDesign\\SearchService\\": "src"
