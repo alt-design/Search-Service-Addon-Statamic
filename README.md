@@ -16,7 +16,7 @@ You will need a site URL and API key from the search service.
 
 ## Installation
 
-The package is currently private, so pull it from GitHub:
+The package is not on Packagist yet, so point Composer at the repository:
 
 ```json
 "repositories": [
@@ -28,11 +28,11 @@ The package is currently private, so pull it from GitHub:
 composer require alt-design/search-service
 ```
 
-Composer needs read access to the repository, which on a server means a GitHub token in
-`~/.composer/auth.json`:
+Nothing else is needed while the repository is public. If it is made private again,
+Composer will want a read-only GitHub token in `~/.composer/auth.json`:
 
 ```json
-{ "github-oauth": { "github.com": "<read-only token>" } }
+{ "github-oauth": { "github.com": "<token>" } }
 ```
 
 ## Configuration
