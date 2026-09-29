@@ -19,6 +19,8 @@ beforeEach(function () {
     Collection::make('articles')->title('Articles')->save();
     Collection::make('pages')->title('Pages')->save();
 
+    Queue::fake();
+
     $this->actingAs(User::make()->id('admin')->email('admin@alt.test')->makeSuper());
 });
 
@@ -91,9 +93,9 @@ it('saves field names prefixed with their collection', function () {
     expect($request->method())->toBe('PUT')
         ->and($request->url())->toBe('https://search.test/api/fields')
         ->and($request->data())->toBe(['fields' => [
-            ['field' => 'articles.title', 'weight' => 20],
-            ['field' => 'articles.slug', 'weight' => 1],
-            ['field' => 'pages.title', 'weight' => 10],
+            ['field' => 'articles.title', 'weight' => 20, 'enabled' => true],
+            ['field' => 'articles.slug', 'weight' => 1, 'enabled' => true],
+            ['field' => 'pages.title', 'weight' => 10, 'enabled' => true],
         ]]);
 });
 
@@ -108,24 +110,89 @@ it('sends an orphaned field under the name it already has', function () {
 
     [$request] = Http::recorded()->first();
 
-    expect($request->data())->toBe(['fields' => [['field' => 'products.title', 'weight' => 5]]]);
+    expect($request->data())->toBe(['fields' => [['field' => 'products.title', 'weight' => 5, 'enabled' => true]]]);
 });
 
-it('drops a disabled collection panel', function () {
+it('sends every field in a disabled panel as disabled instead of dropping them', function () {
     Http::fake(['*' => Http::response(['fields' => [], 'removed' => []])]);
 
     $this->patchJson(cp_route('search-service.fields.update'), ['collections' => [
         ['_id' => 'a', 'type' => 'articles', 'enabled' => false, 'fields' => [
-            ['_id' => 'r1', 'field' => 'title', 'weight' => '20'],
+            ['_id' => 'r1', 'field' => 'title', 'weight' => '20', 'enabled' => true],
+            ['_id' => 'r2', 'field' => 'slug', 'weight' => '5', 'enabled' => false],
         ]],
         ['_id' => 'b', 'type' => 'pages', 'enabled' => true, 'fields' => [
-            ['_id' => 'r2', 'field' => 'title', 'weight' => '10'],
+            ['_id' => 'r3', 'field' => 'title', 'weight' => '10'],
         ]],
     ]])->assertOk();
 
     [$request] = Http::recorded()->first();
 
-    expect($request->data())->toBe(['fields' => [['field' => 'pages.title', 'weight' => 10]]]);
+    expect($request->data())->toBe(['fields' => [
+        ['field' => 'articles.title', 'weight' => 20, 'enabled' => false],
+        ['field' => 'articles.slug', 'weight' => 5, 'enabled' => false],
+        ['field' => 'pages.title', 'weight' => 10, 'enabled' => true],
+    ]]);
+});
+
+it('sends a disabled row as disabled while its panel stays enabled', function () {
+    Http::fake(['*' => Http::response(['fields' => [], 'removed' => []])]);
+
+    $this->patchJson(cp_route('search-service.fields.update'), ['collections' => [
+        ['_id' => 'a', 'type' => 'articles', 'enabled' => true, 'fields' => [
+            ['_id' => 'r1', 'field' => 'title', 'weight' => '20', 'enabled' => false],
+            ['_id' => 'r2', 'field' => 'slug', 'weight' => '1', 'enabled' => true],
+        ]],
+    ]])->assertOk();
+
+    [$request] = Http::recorded()->first();
+
+    expect($request->data())->toBe(['fields' => [
+        ['field' => 'articles.title', 'weight' => 20, 'enabled' => false],
+        ['field' => 'articles.slug', 'weight' => 1, 'enabled' => true],
+    ]]);
+});
+
+it('maps a field enabled state from the service into its row', function () {
+    Http::fake(['search.test/api/fields' => Http::response(['fields' => [
+        ['field' => 'articles.title', 'weight' => 20, 'enabled' => true],
+        ['field' => 'articles.body', 'weight' => 1, 'enabled' => false],
+    ]])]);
+
+    $this->getJson(cp_route('search-service.fields.edit'))
+        ->assertOk()
+        ->assertJsonPath('values.collections.0.fields.0.enabled', true)
+        ->assertJsonPath('values.collections.0.fields.1.enabled', false);
+});
+
+it('defaults a row to enabled when the service omits the flag', function () {
+    Http::fake(['search.test/api/fields' => Http::response(['fields' => [
+        ['field' => 'articles.title', 'weight' => 20],
+    ]])]);
+
+    $this->getJson(cp_route('search-service.fields.edit'))
+        ->assertOk()
+        ->assertJsonPath('values.collections.0.fields.0.enabled', true);
+});
+
+it('round-trips a field enabled state through toValues and toFields', function () {
+    Http::fake(['search.test/api/fields' => Http::response(['fields' => [
+        ['field' => 'articles.title', 'weight' => 20, 'enabled' => true],
+        ['field' => 'articles.body', 'weight' => 1, 'enabled' => false],
+    ]])]);
+
+    $values = $this->getJson(cp_route('search-service.fields.edit'))->assertOk()->json('values');
+
+    Http::fake(['*' => Http::response(['fields' => [], 'removed' => []])]);
+
+    $this->patchJson(cp_route('search-service.fields.update'), $values)->assertOk();
+
+    [$request] = Http::recorded()->first();
+
+    expect($request->data())->toBe(['fields' => [
+        ['field' => 'articles.title', 'weight' => 20, 'enabled' => true],
+        ['field' => 'articles.body', 'weight' => 1, 'enabled' => false],
+    ]]);
 });
 
 it('shows the search service error when it rejects the fields', function () {
@@ -161,7 +228,6 @@ it('only lets users with the edit permission save', function () {
 
 it('queues an index of every collection it saved', function () {
     Http::fake(['*' => Http::response(['fields' => [], 'removed' => []])]);
-    Queue::fake();
 
     $this->patchJson(cp_route('search-service.fields.update'), ['collections' => [
         ['_id' => 'a', 'type' => 'articles', 'enabled' => true, 'fields' => [
@@ -180,7 +246,6 @@ it('queues an index of every collection it saved', function () {
 
 it('queues no index when the service rejects the save', function () {
     Http::fake(['*' => Http::response(['message' => 'Nope.'], 422)]);
-    Queue::fake();
 
     $this->patchJson(cp_route('search-service.fields.update'), ['collections' => [
         ['_id' => 'a', 'type' => 'articles', 'enabled' => true, 'fields' => [
