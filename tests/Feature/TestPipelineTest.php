@@ -1,6 +1,7 @@
 <?php
 
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Queue;
 use Inertia\Testing\AssertableInertia;
 use Statamic\Facades\Collection;
 use Statamic\Facades\Entry;
@@ -10,6 +11,8 @@ use Statamic\Testing\Concerns\PreventsSavingStacheItemsToDisk;
 uses(PreventsSavingStacheItemsToDisk::class);
 
 beforeEach(function () {
+    Queue::fake();
+
     config([
         'search-service.url' => 'https://search.test',
         'search-service.key' => '1|secret',

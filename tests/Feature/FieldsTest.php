@@ -1,6 +1,8 @@
 <?php
 
+use AltDesign\SearchService\Jobs\SyncCollection;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Queue;
 use Statamic\Facades\Collection;
 use Statamic\Facades\User;
 use Statamic\Testing\Concerns\FakesRoles;
@@ -155,4 +157,36 @@ it('only lets users with the edit permission save', function () {
         ->assertForbidden();
 
     Http::assertNothingSent();
+});
+
+it('queues an index of every collection it saved', function () {
+    Http::fake(['*' => Http::response(['fields' => [], 'removed' => []])]);
+    Queue::fake();
+
+    $this->patchJson(cp_route('search-service.fields.update'), ['collections' => [
+        ['_id' => 'a', 'type' => 'articles', 'enabled' => true, 'fields' => [
+            ['_id' => 'r1', 'field' => 'title', 'weight' => '20'],
+            ['_id' => 'r2', 'field' => 'slug', 'weight' => '1'],
+        ]],
+        ['_id' => 'b', 'type' => 'pages', 'enabled' => true, 'fields' => [
+            ['_id' => 'r3', 'field' => 'title', 'weight' => '10'],
+        ]],
+    ]])->assertOk();
+
+    Queue::assertPushed(SyncCollection::class, 2);
+    Queue::assertPushed(SyncCollection::class, fn (SyncCollection $job) => $job->collection === 'articles');
+    Queue::assertPushed(SyncCollection::class, fn (SyncCollection $job) => $job->collection === 'pages');
+});
+
+it('queues no index when the service rejects the save', function () {
+    Http::fake(['*' => Http::response(['message' => 'Nope.'], 422)]);
+    Queue::fake();
+
+    $this->patchJson(cp_route('search-service.fields.update'), ['collections' => [
+        ['_id' => 'a', 'type' => 'articles', 'enabled' => true, 'fields' => [
+            ['_id' => 'r1', 'field' => 'title', 'weight' => '20'],
+        ]],
+    ]])->assertUnprocessable();
+
+    Queue::assertNotPushed(SyncCollection::class);
 });

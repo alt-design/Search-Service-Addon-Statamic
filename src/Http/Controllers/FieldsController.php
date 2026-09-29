@@ -3,8 +3,11 @@
 namespace AltDesign\SearchService\Http\Controllers;
 
 use AltDesign\SearchService\Fields;
+use AltDesign\SearchService\Index;
+use AltDesign\SearchService\Jobs\SyncCollection;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Statamic\CP\PublishForm;
 use Statamic\Facades\User;
@@ -36,8 +39,9 @@ class FieldsController extends CpController
         $this->authorize('edit search-service fields');
 
         $values = PublishForm::make(Fields::blueprint())->submit($request->all());
+        $fields = Fields::toFields($values);
 
-        $response = rescue(fn () => Http::searchService()->put('fields', ['fields' => Fields::toFields($values)]), report: false);
+        $response = rescue(fn () => Http::searchService()->put('fields', ['fields' => $fields]), report: false);
 
         if (! $response?->successful()) {
             throw ValidationException::withMessages([
@@ -45,6 +49,26 @@ class FieldsController extends CpController
             ]);
         }
 
+        Index::forget();
+
+        $this->reindex($fields);
+
         return ['saved' => true];
+    }
+
+    /**
+     * Queue an index of every collection in the saved list. A field only stores values for
+     * entries indexed after it was configured, so a save that adds a collection or adds a
+     * field to one needs its entries sending again. Removing a collection needs no
+     * counterpart: the service drops the stored values along with the field config.
+     *
+     * @param  list<array{field: string, weight: int}>  $fields
+     */
+    private function reindex(array $fields): void
+    {
+        collect($fields)
+            ->map(fn (array $field): string => Str::before($field['field'], '.'))
+            ->unique()
+            ->each(fn (string $collection) => SyncCollection::dispatch($collection));
     }
 }
