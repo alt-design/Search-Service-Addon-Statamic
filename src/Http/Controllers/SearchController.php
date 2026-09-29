@@ -30,6 +30,8 @@ class SearchController
             'limit' => $limit,
             'offset' => $offset,
             'total' => $result['total'],
+            'match' => $result['match'],
+            'corrected' => $result['corrected'],
             'results' => $result['results']
                 ->map(fn ($entry) => [
                     'reference' => (string) $entry->id(),

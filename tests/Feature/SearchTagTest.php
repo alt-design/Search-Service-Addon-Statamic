@@ -29,7 +29,7 @@ beforeEach(function () {
         ->data(['title' => 'Draft Sofa'])->save();
 
     $this->template = '{{ search_service:results q="{{ q }}" limit="5" }}'
-        .'{{ if no_results }}NO RESULTS{{ else }}{{ title }}:{{ score }};{{ /if }}'
+        .'{{ if no_results }}NO RESULTS{{ else }}{{ results }}{{ title }}:{{ score }};{{ /results }}{{ /if }}'
         .'{{ /search_service:results }}';
 
     // Templates written into a site's views are trusted, unlike a value pulled from an
@@ -126,4 +126,75 @@ it('yields no results when a paged query cannot reach the service', function () 
         .'{{ /search_service:results }}';
 
     expect((string) Antlers::parse($template, ['q' => 'sofa'], true))->toContain('NO RESULTS');
+});
+
+it('exposes the match mode to a plain template', function () {
+    Http::fake(['search.test/api/search*' => Http::response([
+        'match' => 'corrected',
+        'corrected' => 'sofa',
+        'results' => [['reference' => 'sofa', 'score' => 0.8]],
+    ])]);
+
+    $template = '{{ search_service:results q="{{ q }}" limit="5" }}'
+        .'{{ if match == "corrected" }}CORRECTED{{ /if }}'
+        .'{{ if match == "partial" }}PARTIAL{{ /if }}'
+        .'{{ /search_service:results }}';
+
+    expect((string) Antlers::parse($template, ['q' => 'sofra'], true))->toBe('CORRECTED');
+});
+
+it('exposes the match mode to a paginated template', function () {
+    Http::fake(['search.test/api/search*' => Http::response([
+        'total' => 1,
+        'match' => 'partial',
+        'results' => [['reference' => 'sofa', 'score' => 0.8]],
+    ])]);
+
+    $template = '{{ search_service:results q="{{ q }}" paginate="2" }}'
+        .'{{ if match == "corrected" }}CORRECTED{{ /if }}'
+        .'{{ if match == "partial" }}PARTIAL{{ /if }}'
+        .'{{ /search_service:results }}';
+
+    expect((string) Antlers::parse($template, ['q' => 'sofa chair'], true))->toBe('PARTIAL');
+});
+
+it('defaults the match mode to exact in a template when the service omits it', function () {
+    Http::fake(['search.test/api/search*' => Http::response([
+        'results' => [['reference' => 'sofa', 'score' => 12.5]],
+    ])]);
+
+    $template = '{{ search_service:results q="{{ q }}" limit="5" }}{{ match }}{{ /search_service:results }}';
+
+    expect((string) Antlers::parse($template, ['q' => 'sofa'], true))->toBe('exact');
+});
+
+it('exposes the corrected query to a plain template', function () {
+    Http::fake(['search.test/api/search*' => Http::response([
+        'match' => 'corrected',
+        'corrected' => 'chair',
+        'results' => [['reference' => 'chair', 'score' => 0.8]],
+    ])]);
+
+    $template = '{{ search_service:results q="{{ q }}" limit="5" }}'
+        .'{{ if match == "corrected" }}Showing results for "{{ corrected }}".{{ /if }}'
+        .'{{ /search_service:results }}';
+
+    expect((string) Antlers::parse($template, ['q' => 'cheir'], true))
+        ->toBe('Showing results for "chair".');
+});
+
+it('exposes the corrected query to a paginated template', function () {
+    Http::fake(['search.test/api/search*' => Http::response([
+        'total' => 1,
+        'match' => 'corrected',
+        'corrected' => 'chair',
+        'results' => [['reference' => 'chair', 'score' => 0.8]],
+    ])]);
+
+    $template = '{{ search_service:results q="{{ q }}" paginate="2" }}'
+        .'{{ if match == "corrected" }}Showing results for "{{ corrected }}".{{ /if }}'
+        .'{{ /search_service:results }}';
+
+    expect((string) Antlers::parse($template, ['q' => 'cheir'], true))
+        ->toBe('Showing results for "chair".');
 });

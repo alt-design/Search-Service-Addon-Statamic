@@ -28,7 +28,7 @@ beforeEach(function () {
 });
 
 it('returns hydrated results in the order the service gave them', function () {
-    Http::fake(['search.test/api/search*' => Http::response(['total' => 2, 'results' => [
+    Http::fake(['search.test/api/search*' => Http::response(['total' => 2, 'match' => 'exact', 'results' => [
         ['reference' => 'chair', 'score' => 8.1],
         ['reference' => 'sofa', 'score' => 12.5],
     ]])]);
@@ -40,11 +40,55 @@ it('returns hydrated results in the order the service gave them', function () {
             'limit' => 5,
             'offset' => 0,
             'total' => 2,
+            'match' => 'exact',
+            'corrected' => null,
             'results' => [
                 ['reference' => 'chair', 'score' => 8.1, 'title' => 'Armchairs', 'url' => '/articles/chair', 'collection' => 'articles'],
                 ['reference' => 'sofa', 'score' => 12.5, 'title' => 'Sofa Beds', 'url' => '/articles/sofa', 'collection' => 'articles'],
             ],
         ]);
+});
+
+it('reports the match mode the service used', function () {
+    Http::fake(['search.test/api/search*' => Http::response(['total' => 1, 'match' => 'corrected', 'corrected' => 'sofa', 'results' => [
+        ['reference' => 'sofa', 'score' => 0.8],
+    ]])]);
+
+    $this->getJson('/!/search-service/search?q=sofra')
+        ->assertOk()
+        ->assertJsonPath('match', 'corrected');
+});
+
+it('defaults the match mode to exact when the service omits it', function () {
+    Http::fake(['search.test/api/search*' => Http::response(['results' => [
+        ['reference' => 'sofa', 'score' => 12.5],
+    ]])]);
+
+    $this->getJson('/!/search-service/search?q=sofa')
+        ->assertOk()
+        ->assertJsonPath('match', 'exact');
+});
+
+it('reports the corrected query when the service sends one', function () {
+    Http::fake(['search.test/api/search*' => Http::response([
+        'match' => 'corrected',
+        'corrected' => 'chair',
+        'results' => [['reference' => 'chair', 'score' => 8.1]],
+    ])]);
+
+    $this->getJson('/!/search-service/search?q=cheir')
+        ->assertOk()
+        ->assertJsonPath('corrected', 'chair');
+});
+
+it('reports a null corrected query when the service omits one', function () {
+    Http::fake(['search.test/api/search*' => Http::response(['results' => [
+        ['reference' => 'sofa', 'score' => 12.5],
+    ]])]);
+
+    $this->getJson('/!/search-service/search?q=sofa')
+        ->assertOk()
+        ->assertJsonPath('corrected', null);
 });
 
 it('drops a reference that does not resolve to an entry', function () {
