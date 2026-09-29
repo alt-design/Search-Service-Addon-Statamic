@@ -182,3 +182,85 @@ it('rejects a negative offset', function () {
 
     Http::assertNothingSent();
 });
+
+it('throttles a visitor once they exceed the search rate limit, per visitor rather than globally', function () {
+    Http::fake(['search.test/api/search*' => Http::response(['results' => []])]);
+
+    $limit = config('search-service.search_rate_limit');
+
+    $this->withServerVariables(['REMOTE_ADDR' => '203.0.113.10']);
+
+    for ($i = 0; $i < $limit; $i++) {
+        $this->getJson('/!/search-service/search?q=sofa')->assertOk();
+    }
+
+    $this->getJson('/!/search-service/search?q=sofa')->assertStatus(429);
+
+    $this->withServerVariables(['REMOTE_ADDR' => '198.51.100.20']);
+
+    $this->getJson('/!/search-service/search?q=sofa')->assertOk();
+});
+
+it('caches a repeated identical query for the configured TTL, asking the service once', function () {
+    Http::fake(['search.test/api/search*' => Http::response(['results' => [
+        ['reference' => 'sofa', 'score' => 12.5],
+    ]])]);
+
+    $this->getJson('/!/search-service/search?q=sofa&limit=5')->assertOk();
+    $this->getJson('/!/search-service/search?q=sofa&limit=5')->assertOk();
+
+    expect(Http::recorded())->toHaveCount(1);
+});
+
+it('asks the service again for a different query', function () {
+    Http::fake(['search.test/api/search*' => Http::response(['results' => [
+        ['reference' => 'sofa', 'score' => 12.5],
+    ]])]);
+
+    $this->getJson('/!/search-service/search?q=sofa&limit=5')->assertOk();
+    $this->getJson('/!/search-service/search?q=chair&limit=5')->assertOk();
+
+    expect(Http::recorded())->toHaveCount(2);
+});
+
+it('does not cache a failed response, so the next request tries the service again', function () {
+    Http::fake(['search.test/api/search*' => Http::response([], 503)]);
+
+    $this->getJson('/!/search-service/search?q=sofa')->assertStatus(503);
+    $this->getJson('/!/search-service/search?q=sofa')->assertStatus(503);
+
+    expect(Http::recorded())->toHaveCount(2);
+});
+
+it('resolves entries fresh on a cache hit, dropping one unpublished since it was cached', function () {
+    Http::fake(['search.test/api/search*' => Http::response(['results' => [
+        ['reference' => 'sofa', 'score' => 12.5],
+        ['reference' => 'chair', 'score' => 8.1],
+    ]])]);
+
+    $this->getJson('/!/search-service/search?q=sofa')
+        ->assertOk()
+        ->assertJsonCount(2, 'results');
+
+    Entry::find('chair')->published(false)->save();
+
+    $this->getJson('/!/search-service/search?q=sofa')
+        ->assertOk()
+        ->assertJsonCount(1, 'results')
+        ->assertJsonPath('results.0.reference', 'sofa');
+
+    expect(Http::recorded())->toHaveCount(1);
+});
+
+it('disables caching when the TTL is set to zero', function () {
+    config(['search-service.search_cache_seconds' => 0]);
+
+    Http::fake(['search.test/api/search*' => Http::response(['results' => [
+        ['reference' => 'sofa', 'score' => 12.5],
+    ]])]);
+
+    $this->getJson('/!/search-service/search?q=sofa')->assertOk();
+    $this->getJson('/!/search-service/search?q=sofa')->assertOk();
+
+    expect(Http::recorded())->toHaveCount(2);
+});
