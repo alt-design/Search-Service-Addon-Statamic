@@ -71,7 +71,7 @@ class Search
      * site has not opted in to this feature: the page falls back rather than breaks, and a
      * warning is logged so a missing opt-in is diagnosable rather than a silent no-result.
      *
-     * @return array{total: int, results: EntryCollection, match: string, corrected: ?string, intent: array{source: string, terms: array<int, string>, concepts: array<int, array{facet: string, value: string}>, unmatched: array<int, array{facet: string, value: string}>}}|null
+     * @return array{total: int, results: EntryCollection, match: string, corrected: ?string, intent: array{source: string, terms: array<int, string>, corrected: ?string, concepts: array<int, array{facet: string, value: string}>, unmatched: array<int, array{facet: string, value: string}>}}|null
      */
     public static function ask(string $query, int $limit = 10, int $offset = 0): ?array
     {
@@ -101,8 +101,8 @@ class Search
      * burst of identical requests only reaches the service once. A failed request is
      * never cached, so the next call tries the service again rather than repeating null.
      *
-     * @param  callable(): (array{total: int, results: array<int, array{reference: string, score: float}>, match: string, corrected: ?string}|array{total: int, results: array<int, array{reference: string, score: float}>, match: string, corrected: ?string, intent: array{source: string, terms: array<int, string>, concepts: array<int, array{facet: string, value: string}>, unmatched: array<int, array{facet: string, value: string}>}}|null)  $fetcher
-     * @return array{total: int, results: array<int, array{reference: string, score: float}>, match: string, corrected: ?string}|array{total: int, results: array<int, array{reference: string, score: float}>, match: string, corrected: ?string, intent: array{source: string, terms: array<int, string>, concepts: array<int, array{facet: string, value: string}>, unmatched: array<int, array{facet: string, value: string}>}}|null
+     * @param  callable(): (array{total: int, results: array<int, array{reference: string, score: float}>, match: string, corrected: ?string}|array{total: int, results: array<int, array{reference: string, score: float}>, match: string, corrected: ?string, intent: array{source: string, terms: array<int, string>, corrected: ?string, concepts: array<int, array{facet: string, value: string}>, unmatched: array<int, array{facet: string, value: string}>}}|null)  $fetcher
+     * @return array{total: int, results: array<int, array{reference: string, score: float}>, match: string, corrected: ?string}|array{total: int, results: array<int, array{reference: string, score: float}>, match: string, corrected: ?string, intent: array{source: string, terms: array<int, string>, corrected: ?string, concepts: array<int, array{facet: string, value: string}>, unmatched: array<int, array{facet: string, value: string}>}}|null
      */
     private static function payload(string $prefix, string $query, int $limit, int $offset, callable $fetcher): ?array
     {
@@ -159,7 +159,7 @@ class Search
      * separately from any other failure so the caller can fall back quietly while the
      * cause stays visible in the logs.
      *
-     * @return array{total: int, results: array<int, array{reference: string, score: float}>, match: string, corrected: ?string, intent: array{source: string, terms: array<int, string>, concepts: array<int, array{facet: string, value: string}>, unmatched: array<int, array{facet: string, value: string}>}}|null
+     * @return array{total: int, results: array<int, array{reference: string, score: float}>, match: string, corrected: ?string, intent: array{source: string, terms: array<int, string>, corrected: ?string, concepts: array<int, array{facet: string, value: string}>, unmatched: array<int, array{facet: string, value: string}>}}|null
      */
     private static function fetchAsk(string $query, int $limit, int $offset): ?array
     {
@@ -190,6 +190,7 @@ class Search
             'intent' => [
                 'source' => (string) ($intent['source'] ?? 'fallback'),
                 'terms' => $intent['terms'] ?? [],
+                'corrected' => isset($intent['corrected']) ? (string) $intent['corrected'] : null,
                 'concepts' => $intent['concepts'] ?? [],
                 'unmatched' => $intent['unmatched'] ?? [],
             ],
