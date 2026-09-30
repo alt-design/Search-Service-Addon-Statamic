@@ -61,6 +61,7 @@ it('returns hydrated results with the intent the service inferred', function () 
             'intent' => [
                 'source' => 'vocabulary',
                 'terms' => ['red', 'chair'],
+                'corrected' => null,
                 'concepts' => [
                     ['facet' => 'colour', 'value' => 'red'],
                     ['facet' => 'type', 'value' => 'chair'],
