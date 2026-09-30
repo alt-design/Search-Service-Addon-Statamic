@@ -58,6 +58,7 @@ it('returns hydrated results with the intent the service inferred', function () 
             'total' => 1,
             'match' => 'intent',
             'corrected' => null,
+            'dropped' => null,
             'intent' => [
                 'source' => 'vocabulary',
                 'terms' => ['red', 'chair'],
@@ -170,4 +171,20 @@ it('does not share its cache with a search for the same words', function () {
     $this->getJson('/!/search-service/ask?'.http_build_query(['q' => 'chair']))->assertOk();
 
     expect(Http::recorded())->toHaveCount(2);
+});
+
+it('reports the meaning the service had to give up', function () {
+    Http::fake(['search.test/api/ask*' => Http::response([
+        'total' => 1,
+        'match' => 'relaxed',
+        'corrected' => null,
+        'dropped' => ['facet' => 'type', 'value' => 'chair'],
+        'intent' => ['source' => 'vocabulary', 'terms' => ['red', 'chair'], 'concepts' => [], 'unmatched' => []],
+        'results' => [['reference' => 'chair', 'score' => 1.84]],
+    ])]);
+
+    $this->getJson('/!/search-service/ask?'.http_build_query(['q' => 'a red chair']))
+        ->assertOk()
+        ->assertJsonPath('match', 'relaxed')
+        ->assertJsonPath('dropped', ['facet' => 'type', 'value' => 'chair']);
 });

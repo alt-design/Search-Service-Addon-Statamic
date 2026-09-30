@@ -141,3 +141,18 @@ it('exposes match, corrected and intent to a paginated template', function () {
     expect((string) Antlers::parse($template, ['q' => 'a chair'], true))
         ->toBe('Armchairs;match=intent source=llm total=1');
 });
+
+it('renders the meaning the service gave up', function () {
+    Http::fake(['search.test/api/ask*' => Http::response([
+        'match' => 'relaxed',
+        'dropped' => ['facet' => 'type', 'value' => 'chair'],
+        'intent' => ['source' => 'vocabulary', 'terms' => [], 'concepts' => [], 'unmatched' => []],
+        'results' => [['reference' => 'chair', 'score' => 8.1]],
+    ])]);
+
+    $template = '{{ search_service:ask q="a red chair" }}'
+        .'{{ if dropped }}gave up {{ dropped:facet }}:{{ dropped:value }}{{ /if }}'
+        .'{{ /search_service:ask }}';
+
+    expect((string) Antlers::parse($template, [], true))->toContain('gave up type:chair');
+});
