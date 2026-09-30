@@ -49,7 +49,7 @@ it('returns hydrated results with the intent the service inferred', function () 
         ],
     ])]);
 
-    $this->postJson('/!/search-service/ask', ['q' => 'i want a red chair', 'limit' => 20])
+    $this->getJson('/!/search-service/ask?'.http_build_query(['q' => 'i want a red chair', 'limit' => 20]))
         ->assertOk()
         ->assertExactJson([
             'query' => 'i want a red chair',
@@ -78,7 +78,7 @@ it('returns hydrated results with the intent the service inferred', function () 
 it('rejects a request with no query', function () {
     Http::fake();
 
-    $this->postJson('/!/search-service/ask', [])->assertJsonValidationErrors('q');
+    $this->getJson('/!/search-service/ask?'.http_build_query([]))->assertJsonValidationErrors('q');
 
     Http::assertNothingSent();
 });
@@ -86,7 +86,7 @@ it('rejects a request with no query', function () {
 it('rejects a blank query', function () {
     Http::fake();
 
-    $this->postJson('/!/search-service/ask', ['q' => ''])->assertJsonValidationErrors('q');
+    $this->getJson('/!/search-service/ask?'.http_build_query(['q' => '']))->assertJsonValidationErrors('q');
 
     Http::assertNothingSent();
 });
@@ -94,7 +94,7 @@ it('rejects a blank query', function () {
 it('returns a 503 when the search service cannot be reached', function () {
     Http::fake(fn () => throw new ConnectionException('Could not connect'));
 
-    $this->postJson('/!/search-service/ask', ['q' => 'red chair'])
+    $this->getJson('/!/search-service/ask?'.http_build_query(['q' => 'red chair']))
         ->assertStatus(503)
         ->assertExactJson(['message' => 'Search is unavailable.']);
 });
@@ -104,7 +104,7 @@ it('returns a 503 and logs a warning when the site has not opted in to ask', fun
 
     Http::fake(['search.test/api/ask*' => Http::response(['message' => 'Forbidden.'], 403)]);
 
-    $this->postJson('/!/search-service/ask', ['q' => 'red chair'])
+    $this->getJson('/!/search-service/ask?'.http_build_query(['q' => 'red chair']))
         ->assertStatus(503)
         ->assertExactJson(['message' => 'Search is unavailable.']);
 
@@ -117,7 +117,7 @@ it('drops a reference that does not resolve to an entry', function () {
         ['reference' => 'sofa', 'score' => 12.5],
     ]])]);
 
-    $this->postJson('/!/search-service/ask', ['q' => 'sofa'])
+    $this->getJson('/!/search-service/ask?'.http_build_query(['q' => 'sofa']))
         ->assertOk()
         ->assertJsonCount(1, 'results')
         ->assertJsonPath('results.0.reference', 'sofa');
@@ -129,7 +129,7 @@ it('drops an unpublished entry', function () {
         ['reference' => 'sofa', 'score' => 12.5],
     ]])]);
 
-    $this->postJson('/!/search-service/ask', ['q' => 'sofa'])
+    $this->getJson('/!/search-service/ask?'.http_build_query(['q' => 'sofa']))
         ->assertOk()
         ->assertJsonCount(1, 'results')
         ->assertJsonPath('results.0.reference', 'sofa');
@@ -138,7 +138,7 @@ it('drops an unpublished entry', function () {
 it('sends the query, limit and offset to the search service', function () {
     Http::fake(['*' => Http::response(['results' => []])]);
 
-    $this->postJson('/!/search-service/ask', ['q' => 'red chair', 'limit' => 5, 'offset' => 2])->assertOk();
+    $this->getJson('/!/search-service/ask?'.http_build_query(['q' => 'red chair', 'limit' => 5, 'offset' => 2]))->assertOk();
 
     [$request] = Http::recorded()->first();
 
@@ -153,8 +153,8 @@ it('caches a repeated identical ask for the configured TTL, asking the service o
         ['reference' => 'sofa', 'score' => 12.5],
     ]])]);
 
-    $this->postJson('/!/search-service/ask', ['q' => 'red chair', 'limit' => 5])->assertOk();
-    $this->postJson('/!/search-service/ask', ['q' => 'red chair', 'limit' => 5])->assertOk();
+    $this->getJson('/!/search-service/ask?'.http_build_query(['q' => 'red chair', 'limit' => 5]))->assertOk();
+    $this->getJson('/!/search-service/ask?'.http_build_query(['q' => 'red chair', 'limit' => 5]))->assertOk();
 
     expect(Http::recorded())->toHaveCount(1);
 });
@@ -166,7 +166,7 @@ it('does not share its cache with a search for the same words', function () {
     ]);
 
     $this->getJson('/!/search-service/search?q=chair')->assertOk();
-    $this->postJson('/!/search-service/ask', ['q' => 'chair'])->assertOk();
+    $this->getJson('/!/search-service/ask?'.http_build_query(['q' => 'chair']))->assertOk();
 
     expect(Http::recorded())->toHaveCount(2);
 });
