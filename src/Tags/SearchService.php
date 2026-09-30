@@ -80,6 +80,80 @@ class SearchService extends Tags
     }
 
     /**
+     * {{ search_service:ask q="" limit="10" }} ... {{ /search_service:ask }}
+     *
+     * As {{ search_service:results }}, but understands plain language rather than
+     * matching words: the entries live in {{ results }} alongside {{ match }},
+     * {{ corrected }}, {{ no_results }} and {{ total_results }}, with {{ paginate }}
+     * appearing too when paginate="" is given. {{ intent }} carries what the service
+     * understood: {{ intent:source }} says whether that came from the site's own
+     * vocabulary, a cache, the language model or a fallback, {{ intent:terms }} the
+     * words it kept, and {{ intent:concepts }} and {{ intent:unmatched }} the concepts
+     * it matched and the ones the site has nothing for, so a template can say "we do
+     * not stock red" rather than showing an empty list.
+     */
+    public function ask(): mixed
+    {
+        $query = trim((string) $this->params->get('q'));
+
+        if ($query === '') {
+            return [];
+        }
+
+        $perPage = $this->clamp($this->params->int('paginate'));
+
+        return $this->params->has('paginate')
+            ? $this->paginatedAsk($query, $perPage)
+            : $this->singleAsk($query);
+    }
+
+    private function singleAsk(string $query): mixed
+    {
+        $result = Search::ask($query, $this->clamp($this->params->int('limit', 10)));
+
+        if ($result === null) {
+            return [];
+        }
+
+        $as = $this->getPaginationResultsKey();
+
+        return array_merge(
+            [
+                $as => $result['results'],
+                'match' => $result['match'],
+                'corrected' => $result['corrected'],
+                'intent' => $result['intent'],
+            ],
+            $this->extraOutput($result['results']),
+        );
+    }
+
+    private function paginatedAsk(string $query, int $perPage): mixed
+    {
+        $page = LengthAwarePaginator::resolveCurrentPage();
+
+        $result = Search::ask($query, $perPage, ($page - 1) * $perPage);
+
+        if ($result === null) {
+            return [];
+        }
+
+        $output = $this->output(new LengthAwarePaginator(
+            $result['results'],
+            $result['total'],
+            $perPage,
+            $page,
+            ['path' => LengthAwarePaginator::resolveCurrentPath()],
+        ));
+
+        return array_merge($output, [
+            'match' => $result['match'],
+            'corrected' => $result['corrected'],
+            'intent' => $result['intent'],
+        ]);
+    }
+
+    /**
      * Template authors can pass a limit from anywhere, including a variable, so it is
      * clamped here as well as validated by the service.
      */

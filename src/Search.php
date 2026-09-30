@@ -4,6 +4,7 @@ namespace AltDesign\SearchService;
 
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use Statamic\Entries\EntryCollection;
 use Statamic\Facades\Entry;
 
@@ -15,7 +16,9 @@ use Statamic\Facades\Entry;
  */
 class Search
 {
-    private const CACHE_PREFIX = 'search-service.search';
+    private const SEARCH_CACHE_PREFIX = 'search-service.search';
+
+    private const ASK_CACHE_PREFIX = 'search-service.ask';
 
     /**
      * Run a query and hydrate the page the service returns, or null when the service
@@ -39,7 +42,13 @@ class Search
      */
     public static function query(string $query, int $limit = 10, int $offset = 0): ?array
     {
-        $payload = static::payload($query, $limit, $offset);
+        $payload = static::payload(
+            static::SEARCH_CACHE_PREFIX,
+            $query,
+            $limit,
+            $offset,
+            fn () => static::fetch($query, $limit, $offset),
+        );
 
         if ($payload === null) {
             return null;
@@ -54,21 +63,56 @@ class Search
     }
 
     /**
+     * Run a natural language query and hydrate the page the service returns, alongside the
+     * intent it inferred. Mirrors query() in every other respect, including returning null
+     * when the service cannot be reached.
+     *
+     * Also returns null when the service answers 403, which is how it reports that the
+     * site has not opted in to this feature: the page falls back rather than breaks, and a
+     * warning is logged so a missing opt-in is diagnosable rather than a silent no-result.
+     *
+     * @return array{total: int, results: EntryCollection, match: string, corrected: ?string, intent: array{source: string, terms: array<int, string>, concepts: array<int, array{facet: string, value: string}>, unmatched: array<int, array{facet: string, value: string}>}}|null
+     */
+    public static function ask(string $query, int $limit = 10, int $offset = 0): ?array
+    {
+        $payload = static::payload(
+            static::ASK_CACHE_PREFIX,
+            $query,
+            $limit,
+            $offset,
+            fn () => static::fetchAsk($query, $limit, $offset),
+        );
+
+        if ($payload === null) {
+            return null;
+        }
+
+        return [
+            'total' => $payload['total'],
+            'results' => static::hydrate($payload['results']),
+            'match' => $payload['match'],
+            'corrected' => $payload['corrected'],
+            'intent' => $payload['intent'],
+        ];
+    }
+
+    /**
      * The service's raw response for this query, limit and offset, cached briefly so a
      * burst of identical requests only reaches the service once. A failed request is
      * never cached, so the next call tries the service again rather than repeating null.
      *
-     * @return array{total: int, results: array<int, array{reference: string, score: float}>, match: string, corrected: ?string}|null
+     * @param  callable(): (array{total: int, results: array<int, array{reference: string, score: float}>, match: string, corrected: ?string}|array{total: int, results: array<int, array{reference: string, score: float}>, match: string, corrected: ?string, intent: array{source: string, terms: array<int, string>, concepts: array<int, array{facet: string, value: string}>, unmatched: array<int, array{facet: string, value: string}>}}|null)  $fetcher
+     * @return array{total: int, results: array<int, array{reference: string, score: float}>, match: string, corrected: ?string}|array{total: int, results: array<int, array{reference: string, score: float}>, match: string, corrected: ?string, intent: array{source: string, terms: array<int, string>, concepts: array<int, array{facet: string, value: string}>, unmatched: array<int, array{facet: string, value: string}>}}|null
      */
-    private static function payload(string $query, int $limit, int $offset): ?array
+    private static function payload(string $prefix, string $query, int $limit, int $offset, callable $fetcher): ?array
     {
         $seconds = (int) config('search-service.search_cache_seconds');
 
         if ($seconds <= 0) {
-            return static::fetch($query, $limit, $offset);
+            return $fetcher();
         }
 
-        $key = static::cacheKey($query, $limit, $offset);
+        $key = static::cacheKey($prefix, $query, $limit, $offset);
 
         $payload = Cache::get($key);
 
@@ -76,7 +120,7 @@ class Search
             return $payload;
         }
 
-        $payload = static::fetch($query, $limit, $offset);
+        $payload = $fetcher();
 
         if ($payload !== null) {
             Cache::put($key, $payload, $seconds);
@@ -110,9 +154,51 @@ class Search
         ];
     }
 
-    private static function cacheKey(string $query, int $limit, int $offset): string
+    /**
+     * A 403 means the site has not opted in to the ask feature, which is reported
+     * separately from any other failure so the caller can fall back quietly while the
+     * cause stays visible in the logs.
+     *
+     * @return array{total: int, results: array<int, array{reference: string, score: float}>, match: string, corrected: ?string, intent: array{source: string, terms: array<int, string>, concepts: array<int, array{facet: string, value: string}>, unmatched: array<int, array{facet: string, value: string}>}}|null
+     */
+    private static function fetchAsk(string $query, int $limit, int $offset): ?array
     {
-        return static::CACHE_PREFIX.'.'.md5($query.'|'.$limit.'|'.$offset);
+        $response = rescue(fn () => Http::searchService()->post('ask', [
+            'q' => $query,
+            'limit' => $limit,
+            'offset' => $offset,
+        ]), report: false);
+
+        if ($response?->status() === 403) {
+            Log::warning('Search service rejected an ask request: site has not opted in to intent search.');
+
+            return null;
+        }
+
+        if (! $response?->successful()) {
+            return null;
+        }
+
+        $corrected = $response->json('corrected');
+        $intent = $response->json('intent') ?? [];
+
+        return [
+            'total' => (int) $response->json('total', 0),
+            'results' => $response->json('results') ?? [],
+            'match' => (string) $response->json('match', 'intent'),
+            'corrected' => $corrected === null ? null : (string) $corrected,
+            'intent' => [
+                'source' => (string) ($intent['source'] ?? 'fallback'),
+                'terms' => $intent['terms'] ?? [],
+                'concepts' => $intent['concepts'] ?? [],
+                'unmatched' => $intent['unmatched'] ?? [],
+            ],
+        ];
+    }
+
+    private static function cacheKey(string $prefix, string $query, int $limit, int $offset): string
+    {
+        return $prefix.'.'.md5($query.'|'.$limit.'|'.$offset);
     }
 
     /**
