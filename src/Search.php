@@ -67,11 +67,15 @@ class Search
      * intent it inferred. Mirrors query() in every other respect, including returning null
      * when the service cannot be reached.
      *
+     * The dropped meaning is set when nothing satisfied the whole query and the service
+     * had to give one part of it up to answer, which is what lets a page say it is showing
+     * red furniture rather than the red chair nobody has.
+     *
      * Also returns null when the service answers 403, which is how it reports that the
      * site has not opted in to this feature: the page falls back rather than breaks, and a
      * warning is logged so a missing opt-in is diagnosable rather than a silent no-result.
      *
-     * @return array{total: int, results: EntryCollection, match: string, corrected: ?string, intent: array{source: string, terms: array<int, string>, corrected: ?string, concepts: array<int, array{facet: string, value: string}>, unmatched: array<int, array{facet: string, value: string}>}}|null
+     * @return array{total: int, results: EntryCollection, match: string, corrected: ?string, dropped: ?array{facet: string, value: string}, intent: array{source: string, terms: array<int, string>, corrected: ?string, concepts: array<int, array{facet: string, value: string}>, unmatched: array<int, array{facet: string, value: string}>}}|null
      */
     public static function ask(string $query, int $limit = 10, int $offset = 0): ?array
     {
@@ -92,6 +96,7 @@ class Search
             'results' => static::hydrate($payload['results']),
             'match' => $payload['match'],
             'corrected' => $payload['corrected'],
+            'dropped' => $payload['dropped'],
             'intent' => $payload['intent'],
         ];
     }
@@ -101,8 +106,8 @@ class Search
      * burst of identical requests only reaches the service once. A failed request is
      * never cached, so the next call tries the service again rather than repeating null.
      *
-     * @param  callable(): (array{total: int, results: array<int, array{reference: string, score: float}>, match: string, corrected: ?string}|array{total: int, results: array<int, array{reference: string, score: float}>, match: string, corrected: ?string, intent: array{source: string, terms: array<int, string>, corrected: ?string, concepts: array<int, array{facet: string, value: string}>, unmatched: array<int, array{facet: string, value: string}>}}|null)  $fetcher
-     * @return array{total: int, results: array<int, array{reference: string, score: float}>, match: string, corrected: ?string}|array{total: int, results: array<int, array{reference: string, score: float}>, match: string, corrected: ?string, intent: array{source: string, terms: array<int, string>, corrected: ?string, concepts: array<int, array{facet: string, value: string}>, unmatched: array<int, array{facet: string, value: string}>}}|null
+     * @param  callable(): (array{total: int, results: array<int, array{reference: string, score: float}>, match: string, corrected: ?string}|array{total: int, results: array<int, array{reference: string, score: float}>, match: string, corrected: ?string, dropped: ?array{facet: string, value: string}, intent: array{source: string, terms: array<int, string>, corrected: ?string, concepts: array<int, array{facet: string, value: string}>, unmatched: array<int, array{facet: string, value: string}>}}|null)  $fetcher
+     * @return array{total: int, results: array<int, array{reference: string, score: float}>, match: string, corrected: ?string}|array{total: int, results: array<int, array{reference: string, score: float}>, match: string, corrected: ?string, dropped: ?array{facet: string, value: string}, intent: array{source: string, terms: array<int, string>, corrected: ?string, concepts: array<int, array{facet: string, value: string}>, unmatched: array<int, array{facet: string, value: string}>}}|null
      */
     private static function payload(string $prefix, string $query, int $limit, int $offset, callable $fetcher): ?array
     {
@@ -159,7 +164,7 @@ class Search
      * separately from any other failure so the caller can fall back quietly while the
      * cause stays visible in the logs.
      *
-     * @return array{total: int, results: array<int, array{reference: string, score: float}>, match: string, corrected: ?string, intent: array{source: string, terms: array<int, string>, corrected: ?string, concepts: array<int, array{facet: string, value: string}>, unmatched: array<int, array{facet: string, value: string}>}}|null
+     * @return array{total: int, results: array<int, array{reference: string, score: float}>, match: string, corrected: ?string, dropped: ?array{facet: string, value: string}, intent: array{source: string, terms: array<int, string>, corrected: ?string, concepts: array<int, array{facet: string, value: string}>, unmatched: array<int, array{facet: string, value: string}>}}|null
      */
     private static function fetchAsk(string $query, int $limit, int $offset): ?array
     {
@@ -180,6 +185,7 @@ class Search
         }
 
         $corrected = $response->json('corrected');
+        $dropped = $response->json('dropped');
         $intent = $response->json('intent') ?? [];
 
         return [
@@ -187,6 +193,10 @@ class Search
             'results' => $response->json('results') ?? [],
             'match' => (string) $response->json('match', 'intent'),
             'corrected' => $corrected === null ? null : (string) $corrected,
+            'dropped' => is_array($dropped) ? [
+                'facet' => (string) ($dropped['facet'] ?? ''),
+                'value' => (string) ($dropped['value'] ?? ''),
+            ] : null,
             'intent' => [
                 'source' => (string) ($intent['source'] ?? 'fallback'),
                 'terms' => $intent['terms'] ?? [],

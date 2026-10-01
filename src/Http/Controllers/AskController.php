@@ -32,6 +32,7 @@ class AskController
             'total' => $result['total'],
             'match' => $result['match'],
             'corrected' => $result['corrected'],
+            'dropped' => $result['dropped'],
             'intent' => $result['intent'],
             'results' => $result['results']
                 ->map(fn ($entry) => [

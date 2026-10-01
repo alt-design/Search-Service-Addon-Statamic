@@ -90,7 +90,9 @@ class SearchService extends Tags
      * vocabulary, a cache, the language model or a fallback, {{ intent:terms }} the
      * words it kept, and {{ intent:concepts }} and {{ intent:unmatched }} the concepts
      * it matched and the ones the site has nothing for, so a template can say "we do
-     * not stock red" rather than showing an empty list.
+     * not stock red" rather than showing an empty list. {{ dropped }} carries
+     * {{ dropped:facet }} and {{ dropped:value }} when nothing satisfied the whole query
+     * and one part of it had to be given up to answer at all.
      */
     public function ask(): mixed
     {
@@ -122,6 +124,7 @@ class SearchService extends Tags
                 $as => $result['results'],
                 'match' => $result['match'],
                 'corrected' => $result['corrected'],
+                'dropped' => $result['dropped'],
                 'intent' => $result['intent'],
             ],
             $this->extraOutput($result['results']),
@@ -149,6 +152,7 @@ class SearchService extends Tags
         return array_merge($output, [
             'match' => $result['match'],
             'corrected' => $result['corrected'],
+            'dropped' => $result['dropped'],
             'intent' => $result['intent'],
         ]);
     }
