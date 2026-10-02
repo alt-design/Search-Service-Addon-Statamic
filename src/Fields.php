@@ -71,8 +71,9 @@ class Fields
      * service sends with no enabled key predates the flag and counts as enabled.
      *
      * @param  list<array{field: string, weight: int, enabled?: bool}>  $fields
+     * @param  array<string, string>  $context  what the service already holds, keyed by collection
      */
-    public static function toValues(array $fields): array
+    public static function toValues(array $fields, array $context = []): array
     {
         $handles = Collection::handles()->all();
 
@@ -85,6 +86,7 @@ class Fields
             ->map(fn ($group, string $set) => [
                 'type' => $set,
                 'enabled' => true,
+                'context' => $context[$set] ?? null,
                 'fields' => $group->map(fn (array $field) => [
                     'field' => $set === static::ORPHANED ? $field['field'] : Str::after($field['field'], '.'),
                     'weight' => $field['weight'],
@@ -93,6 +95,23 @@ class Fields
             ])
             ->values()
             ->all()];
+    }
+
+    /**
+     * What each collection says it is, keyed by collection, for the service's site API.
+     *
+     * The service treats the keys as opaque, so this is the same convention the field
+     * names already use: the collection is this addon's grouping, not a service one.
+     *
+     * @return array<string, string>
+     */
+    public static function toContext(array $values): array
+    {
+        return collect($values['collections'] ?? [])
+            ->filter(fn (array $set): bool => $set['type'] !== static::ORPHANED)
+            ->mapWithKeys(fn (array $set): array => [$set['type'] => trim((string) ($set['context'] ?? ''))])
+            ->reject(fn (string $context): bool => $context === '')
+            ->all();
     }
 
     /**
@@ -124,7 +143,7 @@ class Fields
         $collections = Collection::all()->mapWithKeys(fn (EntryCollection $collection) => [
             $collection->handle() => [
                 'display' => $collection->title(),
-                'fields' => [static::grid(static::fieldOptions($collection), static::suggestedRows($collection))],
+                'fields' => [static::context(), static::grid(static::fieldOptions($collection), static::suggestedRows($collection))],
             ],
         ])->all();
 
@@ -134,6 +153,29 @@ class Fields
                 'display' => 'Other fields',
                 'instructions' => 'Fields configured on the search service that belong to no collection here, usually because the collection was deleted. Remove one to stop it being indexed.',
                 'fields' => [static::grid(null, [])],
+            ],
+        ];
+    }
+
+    /**
+     * What this collection is, in plain words, passed to the service and used when it
+     * works out what the words in these entries mean.
+     *
+     * A word carries no single meaning on its own. Told nothing, a search for somewhere
+     * to sit reads "sit" as a kind of thing rather than as a chair, and "charcoal"
+     * becomes its own colour rather than a black. Saying what the collection is fixes
+     * both, and it is worth the minute it takes.
+     */
+    private static function context(): array
+    {
+        return [
+            'handle' => 'context',
+            'field' => [
+                'type' => 'textarea',
+                'display' => 'What this is',
+                'rows' => 2,
+                'character_limit' => 500,
+                'instructions' => 'One or two sentences on what these entries are and how people ask for them, for example: "An online furniture shop selling sofas, chairs and beds. Shoppers describe colours loosely, by naming something that colour." Left blank, the service reads every word cold. Changing this does not relabel words already done.',
             ],
         ];
     }

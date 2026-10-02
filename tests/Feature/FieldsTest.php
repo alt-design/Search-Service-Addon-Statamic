@@ -10,6 +10,15 @@ use Statamic\Testing\Concerns\PreventsSavingStacheItemsToDisk;
 
 uses(FakesRoles::class, PreventsSavingStacheItemsToDisk::class);
 
+/**
+ * The fields grid inside a collection panel, found by handle so adding another field to
+ * the panel does not move it.
+ */
+function gridFor(array $set): array
+{
+    return collect($set['fields'])->firstWhere('handle', 'fields');
+}
+
 beforeEach(function () {
     config([
         'search-service.url' => 'https://search.test',
@@ -66,7 +75,7 @@ it('offers a collection its own blueprint fields, weighted with a slider', funct
         ->flatMap(fn ($group) => $group['sets'] ?? [])
         ->keyBy('handle');
 
-    $columns = collect($sets['articles']['fields'][0]['fields'])->keyBy('handle');
+    $columns = collect(gridFor($sets['articles'])['fields'])->keyBy('handle');
 
     expect($sets->keys())->toContain('articles', 'pages', '_orphaned')
         ->and($sets['articles']['display'])->toBe('Articles')
@@ -265,8 +274,61 @@ it('prefills a new collection panel with the fields worth indexing', function ()
         ->flatMap(fn ($group) => $group['sets'] ?? [])
         ->keyBy('handle');
 
-    expect($sets['articles']['fields'][0]['default'])->toBe([
+    expect(gridFor($sets['articles'])['default'])->toBe([
         ['field' => 'title', 'weight' => 50, 'enabled' => true],
         ['field' => 'content', 'weight' => 1, 'enabled' => true],
-    ])->and($sets['_orphaned']['fields'][0]['default'])->toBe([]);
+    ])->and(gridFor($sets['_orphaned'])['default'])->toBe([]);
+});
+
+it('loads what each collection told the service it is', function () {
+    Http::fake([
+        'search.test/api/fields' => Http::response(['fields' => [['field' => 'articles.title', 'weight' => 20]]]),
+        'search.test/api/site' => Http::response(['context' => ['articles' => 'Buying guides about furniture.']]),
+    ]);
+
+    $this->getJson(cp_route('search-service.fields.edit'))
+        ->assertOk()
+        ->assertJsonPath('values.collections.0.type', 'articles')
+        ->assertJsonPath('values.collections.0.context', 'Buying guides about furniture.');
+});
+
+it('sends what each collection is to the service when the fields are saved', function () {
+    Http::fake(['search.test/api/*' => Http::response(['fields' => []])]);
+
+    $this->patchJson(cp_route('search-service.fields.update'), ['collections' => [
+        ['type' => 'articles', 'enabled' => true, 'context' => '  Buying guides about furniture.  ', 'fields' => [
+            ['field' => 'title', 'weight' => 20, 'enabled' => true],
+        ]],
+        ['type' => 'pages', 'enabled' => true, 'context' => '', 'fields' => [
+            ['field' => 'title', 'weight' => 10, 'enabled' => true],
+        ]],
+    ]])->assertOk();
+
+    Http::assertSent(fn ($request): bool => $request->method() === 'PUT'
+        && str_contains($request->url(), '/api/site')
+        && $request->data() === ['context' => ['articles' => 'Buying guides about furniture.']]);
+});
+
+it('still saves the fields when the service will not take the descriptions', function () {
+    Http::fake([
+        'search.test/api/site' => Http::response(['message' => 'nope'], 422),
+        'search.test/api/fields' => Http::response(['fields' => []]),
+    ]);
+
+    $this->patchJson(cp_route('search-service.fields.update'), ['collections' => [
+        ['type' => 'articles', 'enabled' => true, 'context' => 'Buying guides.', 'fields' => [
+            ['field' => 'title', 'weight' => 20, 'enabled' => true],
+        ]],
+    ]])->assertOk()->assertJsonPath('saved', true);
+});
+
+it('keeps the editor working when the service cannot say what it holds', function () {
+    Http::fake([
+        'search.test/api/fields' => Http::response(['fields' => [['field' => 'articles.title', 'weight' => 20]]]),
+        'search.test/api/site' => Http::response('', 500),
+    ]);
+
+    $this->getJson(cp_route('search-service.fields.edit'))
+        ->assertOk()
+        ->assertJsonPath('values.collections.0.context', null);
 });
