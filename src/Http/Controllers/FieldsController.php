@@ -7,6 +7,7 @@ use AltDesign\SearchService\Index;
 use AltDesign\SearchService\Jobs\SyncCollection;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Statamic\CP\PublishForm;
@@ -26,10 +27,12 @@ class FieldsController extends CpController
                 ->withError('Could not load the field configs from the search service'.($response ? " (HTTP {$response->status()})" : '').'.');
         }
 
+        $site = rescue(fn () => Http::searchService()->get('site'), report: false);
+
         return PublishForm::make(Fields::blueprint())
             ->title('Fields')
             ->icon('magnifying-glass')
-            ->values(Fields::toValues($response->json('fields')))
+            ->values(Fields::toValues($response->json('fields'), $site?->json('context') ?? []))
             ->readOnly(! User::current()->can('edit search-service fields'))
             ->submittingTo(cp_route('search-service.fields.update'));
     }
@@ -49,11 +52,32 @@ class FieldsController extends CpController
             ]);
         }
 
+        $this->describe(Fields::toContext($values));
+
         Index::forget();
 
         $this->reindex($fields);
 
         return ['saved' => true];
+    }
+
+    /**
+     * Tell the service what each collection is, so it reads this site's words the way its
+     * visitors mean them.
+     *
+     * Saved after the fields and never allowed to fail the save: a description makes
+     * future classification better, so losing one is worth a line in the log rather than
+     * throwing away a field config change that was the point of the save.
+     *
+     * @param  array<string, string>  $context
+     */
+    private function describe(array $context): void
+    {
+        $response = rescue(fn () => Http::searchService()->put('site', ['context' => $context]), report: false);
+
+        if (! $response?->successful()) {
+            Log::warning('Search service would not take the collection descriptions'.($response ? " (HTTP {$response->status()})" : '').'.');
+        }
     }
 
     /**
