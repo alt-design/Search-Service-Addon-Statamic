@@ -70,7 +70,7 @@ class Fields
      * API field list to editor values, grouped into a panel per collection. A field the
      * service sends with no enabled key predates the flag and counts as enabled.
      *
-     * @param  list<array{field: string, weight: int, enabled?: bool}>  $fields
+     * @param  list<array{field: string, weight: int, enabled?: bool, attribute?: bool}>  $fields
      * @param  array<string, string>  $context  what the service already holds, keyed by collection
      */
     public static function toValues(array $fields, array $context = []): array
@@ -91,6 +91,7 @@ class Fields
                     'field' => $set === static::ORPHANED ? $field['field'] : Str::after($field['field'], '.'),
                     'weight' => $field['weight'],
                     'enabled' => $field['enabled'] ?? true,
+                    'attribute' => $field['attribute'] ?? false,
                 ])->values()->all(),
             ])
             ->values()
@@ -120,7 +121,7 @@ class Fields
      * keeps indexing it but leaves it out of search until it is switched back on. A disabled
      * panel overrides its rows, pausing all of them no matter how each is set individually.
      *
-     * @return list<array{field: string, weight: int, enabled: bool}>
+     * @return list<array{field: string, weight: int, enabled: bool, attribute: bool}>
      */
     public static function toFields(array $values): array
     {
@@ -132,6 +133,7 @@ class Fields
                     'field' => $set['type'] === static::ORPHANED ? $row['field'] : "{$set['type']}.{$row['field']}",
                     'weight' => (int) $row['weight'],
                     'enabled' => $panelEnabled && ($row['enabled'] ?? true),
+                    'attribute' => (bool) ($row['attribute'] ?? false),
                 ]);
             })
             ->values()
@@ -226,6 +228,15 @@ class Fields
                             'default' => true,
                         ],
                     ],
+                    [
+                        'handle' => 'attribute',
+                        'field' => [
+                            'type' => 'toggle',
+                            'display' => 'Attribute',
+                            'default' => false,
+                            'instructions' => 'Also send this as a value to filter, sort and count by: a price, a stock toggle, a tag list. Added to what search already does with the field rather than replacing it, so tags can be both searched for and filtered by. To make one filterable but not searchable, such as a price nobody should match on the digits of, switch Enabled off and leave this on.',
+                        ],
+                    ],
                 ],
             ],
         ];
@@ -247,6 +258,7 @@ class Fields
                 'field' => $field->handle(),
                 'weight' => static::SUGGESTED_WEIGHTS[$field->handle()] ?? 1,
                 'enabled' => true,
+                'attribute' => false,
             ])
             ->values()
             ->all();

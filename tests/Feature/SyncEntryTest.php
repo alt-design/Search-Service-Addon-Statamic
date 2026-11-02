@@ -76,6 +76,7 @@ it('pushes a published entry in an active collection to the index', function () 
         ->and($posted->data())->toBe(['documents' => [[
             'reference' => '1',
             'fields' => ['articles.title' => 'Sofa', 'articles.body' => 'A comfy sofa.'],
+            'attributes' => [],
         ]]]);
 });
 
@@ -126,4 +127,41 @@ it('sends nothing for an entry with no values', function () {
     (new SyncEntry('1'))->handle();
 
     Http::assertNotSent(fn ($request) => $request->method() === 'POST');
+});
+
+it('sends a field configured as an attribute as a value as well as as words', function () {
+    Queue::fake();
+    article('sofa', ['title' => 'Sofa', 'price' => 499.99, 'in_stock' => true]);
+    fakeService([
+        ['field' => 'articles.title', 'weight' => 20],
+        ['field' => 'articles.price', 'weight' => 1, 'attribute' => true],
+        ['field' => 'articles.in_stock', 'weight' => 1, 'attribute' => true],
+    ]);
+
+    (new SyncEntry('sofa'))->handle();
+
+    $sent = Http::recorded()->map(fn (array $pair) => $pair[0])
+        ->first(fn ($request) => $request->method() === 'POST')->data()['documents'][0];
+
+    expect($sent['fields'])->toBe([
+        'articles.title' => 'Sofa',
+        'articles.price' => '499.99',
+        'articles.in_stock' => '1',
+    ])->and($sent['attributes'])->toBe(['price' => 499.99, 'in_stock' => true]);
+});
+
+it('keeps a list of values as a list, so a product can carry two colours', function () {
+    Queue::fake();
+    article('sofa', ['title' => 'Sofa', 'colour' => ['blue', 'navy']]);
+    fakeService([
+        ['field' => 'articles.title', 'weight' => 20],
+        ['field' => 'articles.colour', 'weight' => 1, 'attribute' => true],
+    ]);
+
+    (new SyncEntry('sofa'))->handle();
+
+    $sent = Http::recorded()->map(fn (array $pair) => $pair[0])
+        ->first(fn ($request) => $request->method() === 'POST')->data()['documents'][0];
+
+    expect($sent['attributes'])->toBe(['colour' => ['blue', 'navy']]);
 });

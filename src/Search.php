@@ -38,16 +38,19 @@ class Search
      * Entries are resolved fresh on every call, cached or not, so a cached hit still
      * reflects an entry published or unpublished since the payload was stored.
      *
-     * @return array{total: int, results: EntryCollection, match: string, corrected: ?string}|null
+     * @return array{total: int, results: EntryCollection, match: string, corrected: ?string, facets: array<string, list<array{value: string, total: int}>>}|null
      */
-    public static function query(string $query, int $limit = 10, int $offset = 0): ?array
+    public static function query(string $query, int $limit = 10, int $offset = 0, ?Criteria $criteria = null): ?array
     {
+        $criteria ??= Criteria::none();
+
         $payload = static::payload(
             static::SEARCH_CACHE_PREFIX,
             $query,
             $limit,
             $offset,
-            fn () => static::fetch($query, $limit, $offset),
+            $criteria,
+            fn () => static::fetch($query, $limit, $offset, $criteria),
         );
 
         if ($payload === null) {
@@ -59,6 +62,7 @@ class Search
             'results' => static::hydrate($payload['results']),
             'match' => $payload['match'],
             'corrected' => $payload['corrected'],
+            'facets' => $payload['facets'],
         ];
     }
 
@@ -75,16 +79,19 @@ class Search
      * site has not opted in to this feature: the page falls back rather than breaks, and a
      * warning is logged so a missing opt-in is diagnosable rather than a silent no-result.
      *
-     * @return array{total: int, results: EntryCollection, match: string, corrected: ?string, dropped: ?array{facet: string, value: string}, intent: array{source: string, terms: array<int, string>, corrected: ?string, concepts: array<int, array{facet: string, value: string}>, unmatched: array<int, array{facet: string, value: string}>}}|null
+     * @return array{total: int, results: EntryCollection, match: string, corrected: ?string, facets: array<string, list<array{value: string, total: int}>>, dropped: ?array{facet: string, value: string}, intent: array{source: string, terms: array<int, string>, corrected: ?string, concepts: array<int, array{facet: string, value: string}>, unmatched: array<int, array{facet: string, value: string}>}}|null
      */
-    public static function ask(string $query, int $limit = 10, int $offset = 0): ?array
+    public static function ask(string $query, int $limit = 10, int $offset = 0, ?Criteria $criteria = null): ?array
     {
+        $criteria ??= Criteria::none();
+
         $payload = static::payload(
             static::ASK_CACHE_PREFIX,
             $query,
             $limit,
             $offset,
-            fn () => static::fetchAsk($query, $limit, $offset),
+            $criteria,
+            fn () => static::fetchAsk($query, $limit, $offset, $criteria),
         );
 
         if ($payload === null) {
@@ -96,6 +103,7 @@ class Search
             'results' => static::hydrate($payload['results']),
             'match' => $payload['match'],
             'corrected' => $payload['corrected'],
+            'facets' => $payload['facets'],
             'dropped' => $payload['dropped'],
             'intent' => $payload['intent'],
         ];
@@ -106,10 +114,10 @@ class Search
      * burst of identical requests only reaches the service once. A failed request is
      * never cached, so the next call tries the service again rather than repeating null.
      *
-     * @param  callable(): (array{total: int, results: array<int, array{reference: string, score: float}>, match: string, corrected: ?string}|array{total: int, results: array<int, array{reference: string, score: float}>, match: string, corrected: ?string, dropped: ?array{facet: string, value: string}, intent: array{source: string, terms: array<int, string>, corrected: ?string, concepts: array<int, array{facet: string, value: string}>, unmatched: array<int, array{facet: string, value: string}>}}|null)  $fetcher
-     * @return array{total: int, results: array<int, array{reference: string, score: float}>, match: string, corrected: ?string}|array{total: int, results: array<int, array{reference: string, score: float}>, match: string, corrected: ?string, dropped: ?array{facet: string, value: string}, intent: array{source: string, terms: array<int, string>, corrected: ?string, concepts: array<int, array{facet: string, value: string}>, unmatched: array<int, array{facet: string, value: string}>}}|null
+     * @param  callable(): (array{total: int, results: array<int, array{reference: string, score: float}>, match: string, corrected: ?string, facets: array<string, list<array{value: string, total: int}>>}|array{total: int, results: array<int, array{reference: string, score: float}>, match: string, corrected: ?string, facets: array<string, list<array{value: string, total: int}>>, dropped: ?array{facet: string, value: string}, intent: array{source: string, terms: array<int, string>, corrected: ?string, concepts: array<int, array{facet: string, value: string}>, unmatched: array<int, array{facet: string, value: string}>}}|null)  $fetcher
+     * @return array{total: int, results: array<int, array{reference: string, score: float}>, match: string, corrected: ?string, facets: array<string, list<array{value: string, total: int}>>}|array{total: int, results: array<int, array{reference: string, score: float}>, match: string, corrected: ?string, facets: array<string, list<array{value: string, total: int}>>, dropped: ?array{facet: string, value: string}, intent: array{source: string, terms: array<int, string>, corrected: ?string, concepts: array<int, array{facet: string, value: string}>, unmatched: array<int, array{facet: string, value: string}>}}|null
      */
-    private static function payload(string $prefix, string $query, int $limit, int $offset, callable $fetcher): ?array
+    private static function payload(string $prefix, string $query, int $limit, int $offset, Criteria $criteria, callable $fetcher): ?array
     {
         $seconds = (int) config('search-service.search_cache_seconds');
 
@@ -117,7 +125,7 @@ class Search
             return $fetcher();
         }
 
-        $key = static::cacheKey($prefix, $query, $limit, $offset);
+        $key = static::cacheKey($prefix, $query, $limit, $offset, $criteria);
 
         $payload = Cache::get($key);
 
@@ -135,14 +143,15 @@ class Search
     }
 
     /**
-     * @return array{total: int, results: array<int, array{reference: string, score: float}>, match: string, corrected: ?string}|null
+     * @return array{total: int, results: array<int, array{reference: string, score: float}>, match: string, corrected: ?string, facets: array<string, list<array{value: string, total: int}>>}|null
      */
-    private static function fetch(string $query, int $limit, int $offset): ?array
+    private static function fetch(string $query, int $limit, int $offset, Criteria $criteria): ?array
     {
         $response = rescue(fn () => Http::searchService()->get('search', [
             'q' => $query,
             'limit' => $limit,
             'offset' => $offset,
+            ...$criteria->toQuery(),
         ]), report: false);
 
         if (! $response?->successful()) {
@@ -156,6 +165,7 @@ class Search
             'results' => $response->json('results') ?? [],
             'match' => (string) $response->json('match', 'exact'),
             'corrected' => $corrected === null ? null : (string) $corrected,
+            'facets' => $response->json('facets') ?? [],
         ];
     }
 
@@ -164,14 +174,15 @@ class Search
      * separately from any other failure so the caller can fall back quietly while the
      * cause stays visible in the logs.
      *
-     * @return array{total: int, results: array<int, array{reference: string, score: float}>, match: string, corrected: ?string, dropped: ?array{facet: string, value: string}, intent: array{source: string, terms: array<int, string>, corrected: ?string, concepts: array<int, array{facet: string, value: string}>, unmatched: array<int, array{facet: string, value: string}>}}|null
+     * @return array{total: int, results: array<int, array{reference: string, score: float}>, match: string, corrected: ?string, facets: array<string, list<array{value: string, total: int}>>, dropped: ?array{facet: string, value: string}, intent: array{source: string, terms: array<int, string>, corrected: ?string, concepts: array<int, array{facet: string, value: string}>, unmatched: array<int, array{facet: string, value: string}>}}|null
      */
-    private static function fetchAsk(string $query, int $limit, int $offset): ?array
+    private static function fetchAsk(string $query, int $limit, int $offset, Criteria $criteria): ?array
     {
         $response = rescue(fn () => Http::searchService()->post('ask', [
             'q' => $query,
             'limit' => $limit,
             'offset' => $offset,
+            ...$criteria->toQuery(),
         ]), report: false);
 
         if ($response?->status() === 403) {
@@ -193,6 +204,7 @@ class Search
             'results' => $response->json('results') ?? [],
             'match' => (string) $response->json('match', 'intent'),
             'corrected' => $corrected === null ? null : (string) $corrected,
+            'facets' => $response->json('facets') ?? [],
             'dropped' => is_array($dropped) ? [
                 'facet' => (string) ($dropped['facet'] ?? ''),
                 'value' => (string) ($dropped['value'] ?? ''),
@@ -207,9 +219,13 @@ class Search
         ];
     }
 
-    private static function cacheKey(string $prefix, string $query, int $limit, int $offset): string
+    /**
+     * Filters, sorting and facets are part of the key, not a detail of it: a page asking
+     * for blue must not be served the cached answer for everything.
+     */
+    private static function cacheKey(string $prefix, string $query, int $limit, int $offset, Criteria $criteria): string
     {
-        return $prefix.'.'.md5($query.'|'.$limit.'|'.$offset);
+        return $prefix.'.'.md5($query.'|'.$limit.'|'.$offset.'|'.$criteria->fingerprint());
     }
 
     /**

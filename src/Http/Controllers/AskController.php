@@ -2,6 +2,7 @@
 
 namespace AltDesign\SearchService\Http\Controllers;
 
+use AltDesign\SearchService\Criteria;
 use AltDesign\SearchService\Search;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -14,12 +15,17 @@ class AskController
             'q' => ['required', 'string', 'max:255'],
             'limit' => ['sometimes', 'integer', 'min:1', 'max:100'],
             'offset' => ['sometimes', 'integer', 'min:0', 'max:10000'],
+            'filter' => ['sometimes', 'array', 'max:20'],
+            'sort' => ['sometimes', 'string', 'max:64'],
+            'direction' => ['sometimes', 'in:asc,desc'],
+            'facets' => ['sometimes', 'array', 'max:10'],
+            'facets.*' => ['string', 'max:64'],
         ]);
 
         $limit = (int) ($data['limit'] ?? 10);
         $offset = (int) ($data['offset'] ?? 0);
 
-        $result = Search::ask($data['q'], $limit, $offset);
+        $result = Search::ask($data['q'], $limit, $offset, Criteria::fromRequest($data));
 
         if ($result === null) {
             return response()->json(['message' => 'Search is unavailable.'], 503);
@@ -32,6 +38,7 @@ class AskController
             'total' => $result['total'],
             'match' => $result['match'],
             'corrected' => $result['corrected'],
+            'facets' => $result['facets'],
             'dropped' => $result['dropped'],
             'intent' => $result['intent'],
             'results' => $result['results']

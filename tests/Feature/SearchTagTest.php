@@ -198,3 +198,68 @@ it('exposes the corrected query to a paginated template', function () {
     expect((string) Antlers::parse($template, ['q' => 'cheir'], true))
         ->toBe('Showing results for "chair".');
 });
+
+it('narrows, orders and counts from the tag parameters', function () {
+    Http::fake(['search.test/api/search*' => Http::response([
+        'total' => 1,
+        'match' => 'exact',
+        'facets' => ['colour' => [['value' => 'blue', 'total' => 1]]],
+        'results' => [['reference' => 'sofa', 'score' => 1.0]],
+    ])]);
+
+    $template = '{{ search_service:results q="sofa" filter:colour="blue|grey" filter:price:lte="500" sort="price" direction="asc" facets="colour" }}'
+        .'{{ facets:colour }}{{ value }}={{ total }};{{ /facets:colour }}'
+        .'{{ /search_service:results }}';
+
+    expect((string) Antlers::parse($template, [], true))->toContain('blue=1;');
+
+    $sent = Http::recorded()->map(fn (array $pair) => $pair[0])->first();
+
+    expect($sent->data())->toMatchArray([
+        'q' => 'sofa',
+        'filter' => ['colour' => ['blue', 'grey'], 'price' => ['lte' => '500']],
+        'sort' => 'price',
+        'direction' => 'asc',
+        'facets' => ['colour'],
+    ]);
+});
+
+it('sends a single filter value as a value rather than a list of one', function () {
+    Http::fake(['search.test/api/search*' => Http::response(['total' => 0, 'match' => 'none', 'results' => []])]);
+
+    Antlers::parse('{{ search_service:results q="sofa" filter:colour="blue" }}{{ /search_service:results }}', [], true);
+
+    expect(Http::recorded()->map(fn (array $pair) => $pair[0])->first()->data()['filter'])
+        ->toBe(['colour' => 'blue']);
+});
+
+it('does not serve a filtered search the cached answer for an unfiltered one', function () {
+    Http::fake(['search.test/api/search*' => Http::response([
+        'total' => 1, 'match' => 'exact', 'results' => [['reference' => 'sofa', 'score' => 1.0]],
+    ])]);
+
+    Antlers::parse('{{ search_service:results q="sofa" }}{{ /search_service:results }}', [], true);
+    Antlers::parse('{{ search_service:results q="sofa" filter:colour="blue" }}{{ /search_service:results }}', [], true);
+
+    expect(Http::recorded())->toHaveCount(2);
+});
+
+it('serves the same filtered search from cache the second time', function () {
+    Http::fake(['search.test/api/search*' => Http::response([
+        'total' => 1, 'match' => 'exact', 'results' => [['reference' => 'sofa', 'score' => 1.0]],
+    ])]);
+
+    Antlers::parse('{{ search_service:results q="sofa" filter:colour="blue" }}{{ /search_service:results }}', [], true);
+    Antlers::parse('{{ search_service:results q="sofa" filter:colour="blue" }}{{ /search_service:results }}', [], true);
+
+    expect(Http::recorded())->toHaveCount(1);
+});
+
+it('sends nothing extra for a plain search', function () {
+    Http::fake(['search.test/api/search*' => Http::response(['total' => 0, 'match' => 'none', 'results' => []])]);
+
+    Antlers::parse('{{ search_service:results q="sofa" }}{{ /search_service:results }}', [], true);
+
+    expect(array_keys(Http::recorded()->map(fn (array $pair) => $pair[0])->first()->data()))
+        ->toBe(['q', 'limit', 'offset']);
+});
