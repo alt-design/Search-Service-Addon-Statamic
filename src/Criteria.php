@@ -77,18 +77,37 @@ final readonly class Criteria
     /**
      * Read a request, where filters already arrive as arrays and need no splitting.
      *
+     * Unlike a template, a request comes from the browser, so it says which names it may
+     * use: anything else is dropped. Without that, a visitor can name any attribute and
+     * read back from the result count whether this site holds it, and ask for a facet on
+     * it to be told every value. Marking a field as an attribute in the control panel is
+     * what makes it public, and nothing else does.
+     *
+     * The allowed names are resolved only when the request asks for something, since
+     * finding them costs a request of its own and a plain search needs none.
+     *
      * @param  array<string, mixed>  $data
+     * @param  callable(): list<string>  $allowed  attribute names this site has configured
      */
-    public static function fromRequest(array $data): self
+    public static function fromRequest(array $data, callable $allowed): self
     {
         $filter = $data['filter'] ?? [];
         $facets = $data['facets'] ?? [];
+        $sort = self::text($data['sort'] ?? null);
+
+        if (($filter === [] || ! is_array($filter)) && ($facets === [] || ! is_array($facets)) && $sort === null) {
+            return new self(direction: self::text($data['direction'] ?? null));
+        }
+
+        $allowed = $allowed();
 
         return new self(
-            is_array($filter) ? $filter : [],
-            self::text($data['sort'] ?? null),
+            is_array($filter) ? array_intersect_key($filter, array_flip($allowed)) : [],
+            $sort !== null && in_array($sort, $allowed, true) ? $sort : null,
             self::text($data['direction'] ?? null),
-            is_array($facets) ? array_values(array_filter($facets, 'is_string')) : [],
+            is_array($facets)
+                ? array_values(array_intersect(array_filter($facets, 'is_string'), $allowed))
+                : [],
         );
     }
 

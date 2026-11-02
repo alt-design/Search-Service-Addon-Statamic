@@ -76,6 +76,28 @@ class Index
     }
 
     /**
+     * The attribute names a public request may filter, sort or count by: the bare handles
+     * of the fields this site has configured as attributes.
+     *
+     * Bare because that is what a document is sent under, and what belongs in a URL.
+     *
+     * Nothing when the service cannot say, rather than an error: this is a second request
+     * on the path of a search, and a search that cannot be narrowed is a better answer
+     * than one that will not run. Nothing is also the safe way to be wrong, since it
+     * permits no name rather than every name.
+     *
+     * @return list<string>
+     */
+    public static function filterableAttributes(): array
+    {
+        return rescue(fn (): array => collect(static::attributeFields())
+            ->map(fn (string $field): string => Str::after($field, '.'))
+            ->unique()
+            ->values()
+            ->all(), [], report: false);
+    }
+
+    /**
      * Drop the cached collection list, so the next sync sees a field config change.
      */
     public static function forget(): void
