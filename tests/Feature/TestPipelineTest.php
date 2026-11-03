@@ -49,6 +49,7 @@ it('returns the document an entry sends without running it', function () {
         ->assertExactJson([
             'reference' => 'about',
             'fields' => ['pages.title' => 'About', 'pages.content' => json_encode($this->bard), 'pages.featured' => '1'],
+            'attributes' => [],
         ]);
 
     Http::assertNothingSent();
@@ -73,6 +74,7 @@ it('runs the entry through the pipeline and returns the result', function () {
         ->and($request->data())->toBe([
             'reference' => 'about',
             'fields' => ['pages.title' => 'About', 'pages.content' => json_encode($this->bard), 'pages.featured' => '1'],
+            'attributes' => [],
         ]);
 });
 

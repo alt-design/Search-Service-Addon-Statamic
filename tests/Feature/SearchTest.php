@@ -42,6 +42,7 @@ it('returns hydrated results in the order the service gave them', function () {
             'total' => 2,
             'match' => 'exact',
             'corrected' => null,
+            'facets' => [],
             'results' => [
                 ['reference' => 'chair', 'score' => 8.1, 'title' => 'Armchairs', 'url' => '/articles/chair', 'collection' => 'articles'],
                 ['reference' => 'sofa', 'score' => 12.5, 'title' => 'Sofa Beds', 'url' => '/articles/sofa', 'collection' => 'articles'],
@@ -263,4 +264,70 @@ it('disables caching when the TTL is set to zero', function () {
     $this->getJson('/!/search-service/search?q=sofa')->assertOk();
 
     expect(Http::recorded())->toHaveCount(2);
+});
+
+it('forwards filters and facets through the action route', function () {
+    Http::fake([
+        'search.test/api/fields' => Http::response(['fields' => [
+            ['field' => 'articles.colour', 'weight' => 1, 'attribute' => true],
+            ['field' => 'articles.price', 'weight' => 1, 'attribute' => true],
+        ]]),
+        'search.test/api/search*' => Http::response([
+        'total' => 1,
+        'match' => 'exact',
+        'facets' => ['colour' => [['value' => 'blue', 'total' => 1]]],
+        'results' => [['reference' => 'sofa', 'score' => 1.0]],
+        ]),
+    ]);
+
+    $this->getJson('/!/search-service/search?'.http_build_query([
+        'q' => 'sofa',
+        'filter' => ['colour' => 'blue'],
+        'sort' => 'price',
+        'direction' => 'asc',
+        'facets' => ['colour'],
+    ]))
+        ->assertOk()
+        ->assertJsonPath('facets.colour', [['value' => 'blue', 'total' => 1]]);
+
+    expect(Http::recorded()->map(fn (array $pair) => $pair[0])
+        ->first(fn ($request) => str_contains($request->url(), '/api/search'))->data())
+        ->toMatchArray(['filter' => ['colour' => 'blue'], 'sort' => 'price', 'facets' => ['colour']]);
+});
+
+it('drops a filter naming an attribute this site has not configured', function () {
+    Http::fake([
+        'search.test/api/fields' => Http::response(['fields' => [
+            ['field' => 'articles.colour', 'weight' => 1, 'attribute' => true],
+        ]]),
+        'search.test/api/search*' => Http::response(['total' => 0, 'match' => 'none', 'results' => []]),
+    ]);
+
+    $this->getJson('/!/search-service/search?'.http_build_query([
+        'q' => 'sofa',
+        'filter' => ['colour' => 'blue', 'internal_cost' => '10'],
+        'facets' => ['colour', 'internal_cost'],
+        'sort' => 'internal_cost',
+    ]))->assertOk();
+
+    $sent = Http::recorded()->map(fn (array $pair) => $pair[0])
+        ->first(fn ($request) => str_contains($request->url(), '/api/search'))->data();
+
+    expect($sent['filter'])->toBe(['colour' => 'blue'])
+        ->and($sent['facets'])->toBe(['colour'])
+        ->and($sent)->not->toHaveKey('sort');
+});
+
+it('asks the service nothing extra for a search that narrows nothing', function () {
+    Http::fake(['search.test/api/search*' => Http::response(['total' => 0, 'match' => 'none', 'results' => []])]);
+
+    $this->getJson('/!/search-service/search?q=sofa')->assertOk();
+
+    expect(Http::recorded())->toHaveCount(1);
+});
+
+it('rejects a direction it cannot read', function () {
+    Http::fake();
+
+    $this->getJson('/!/search-service/search?q=sofa&direction=sideways')->assertStatus(422);
 });

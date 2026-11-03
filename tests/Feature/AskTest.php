@@ -58,6 +58,7 @@ it('returns hydrated results with the intent the service inferred', function () 
             'total' => 1,
             'match' => 'intent',
             'corrected' => null,
+            'facets' => [],
             'dropped' => null,
             'intent' => [
                 'source' => 'vocabulary',

@@ -25,6 +25,22 @@ class Index
     private const CACHE_SECONDS = 300;
 
     /**
+     * The field configs the service holds, cached: one request answers both which
+     * collections are active and which of their fields carry structured values, and a
+     * sync asks for every entry it pushes.
+     *
+     * @return list<array{field: string, weight: int, enabled?: bool, attribute?: bool}>
+     */
+    public static function configuredFields(): array
+    {
+        return Cache::remember(
+            static::CACHE_KEY,
+            static::CACHE_SECONDS,
+            fn (): array => static::send(fn () => Http::searchService()->get('fields'))->json('fields') ?? [],
+        );
+    }
+
+    /**
      * Collection handles with at least one field config on the service. Configuring a
      * collection's fields is what activates it: a collection with no configs has nothing
      * stored against it, so a separate switch could only ever disagree with the service.
@@ -33,20 +49,52 @@ class Index
      */
     public static function activeCollections(): array
     {
-        return Cache::remember(static::CACHE_KEY, static::CACHE_SECONDS, function (): array {
-            $fields = static::send(fn () => Http::searchService()->get('fields'))->json('fields');
+        return collect(static::configuredFields())
+            ->map(fn (array $field): string => Str::before($field['field'], '.'))
+            ->unique()
+            ->values()
+            ->all();
+    }
 
-            return collect($fields)
-                ->map(fn (array $field): string => Str::before($field['field'], '.'))
-                ->unique()
-                ->values()
-                ->all();
-        });
+    /**
+     * Fields configured to carry a structured value, as "collection.handle".
+     *
+     * @return list<string>
+     */
+    public static function attributeFields(): array
+    {
+        return collect(static::configuredFields())
+            ->filter(fn (array $field): bool => $field['attribute'] ?? false)
+            ->map(fn (array $field): string => $field['field'])
+            ->values()
+            ->all();
     }
 
     public static function isActive(?string $collection): bool
     {
         return $collection !== null && in_array($collection, static::activeCollections(), true);
+    }
+
+    /**
+     * The attribute names a public request may filter, sort or count by: the bare handles
+     * of the fields this site has configured as attributes.
+     *
+     * Bare because that is what a document is sent under, and what belongs in a URL.
+     *
+     * Nothing when the service cannot say, rather than an error: this is a second request
+     * on the path of a search, and a search that cannot be narrowed is a better answer
+     * than one that will not run. Nothing is also the safe way to be wrong, since it
+     * permits no name rather than every name.
+     *
+     * @return list<string>
+     */
+    public static function filterableAttributes(): array
+    {
+        return rescue(fn (): array => collect(static::attributeFields())
+            ->map(fn (string $field): string => Str::after($field, '.'))
+            ->unique()
+            ->values()
+            ->all(), [], report: false);
     }
 
     /**
@@ -73,7 +121,7 @@ class Index
 
         foreach (LazyCollection::make($entries)->chunk(static::batchSize()) as $batch) {
             $documents = $batch
-                ->map(fn (Entry $entry): array => Document::fromEntry($entry))
+                ->map(fn (Entry $entry): array => Document::fromEntry($entry, static::attributeFields()))
                 ->filter(fn (array $document): bool => $document['fields'] !== [])
                 ->values()
                 ->all();

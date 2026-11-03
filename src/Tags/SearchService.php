@@ -2,6 +2,7 @@
 
 namespace AltDesign\SearchService\Tags;
 
+use AltDesign\SearchService\Criteria;
 use AltDesign\SearchService\Search;
 use Statamic\Extensions\Pagination\LengthAwarePaginator;
 use Statamic\Tags\Concerns\OutputsItems;
@@ -18,7 +19,10 @@ class SearchService extends Tags
      *
      * The entries always live in {{ results }}, alongside {{ match }} reporting which tier
      * answered the query (exact, prefix, corrected, partial or none), {{ corrected }} giving
-     * the corrected query string when match is corrected and null otherwise, and the
+     * the corrected query string when match is corrected and null otherwise,
+     * {{ facets }} holding each value of every attribute named in facets="" with a {{ total }}
+     * of how many matched it (not {{ count }}, which Antlers reserves for the row's
+     * position in the loop), and the
      * {{ no_results }} and {{ total_results }} variables the core collection tag also
      * exposes. With paginate="10" a {{ paginate }} array appears as well, which is how the
      * core collection tag behaves. The page comes from ?page= in the query string.
@@ -40,7 +44,7 @@ class SearchService extends Tags
 
     private function single(string $query): mixed
     {
-        $result = Search::query($query, $this->clamp($this->params->int('limit', 10)));
+        $result = Search::query($query, $this->clamp($this->params->int('limit', 10)), 0, $this->criteria());
 
         if ($result === null) {
             return [];
@@ -49,7 +53,7 @@ class SearchService extends Tags
         $as = $this->getPaginationResultsKey();
 
         return array_merge(
-            [$as => $result['results'], 'match' => $result['match'], 'corrected' => $result['corrected']],
+            [$as => $result['results'], 'match' => $result['match'], 'corrected' => $result['corrected'], 'facets' => $result['facets']],
             $this->extraOutput($result['results']),
         );
     }
@@ -62,7 +66,7 @@ class SearchService extends Tags
     {
         $page = LengthAwarePaginator::resolveCurrentPage();
 
-        $result = Search::query($query, $perPage, ($page - 1) * $perPage);
+        $result = Search::query($query, $perPage, ($page - 1) * $perPage, $this->criteria());
 
         if ($result === null) {
             return [];
@@ -76,7 +80,7 @@ class SearchService extends Tags
             ['path' => LengthAwarePaginator::resolveCurrentPath()],
         ));
 
-        return array_merge($output, ['match' => $result['match'], 'corrected' => $result['corrected']]);
+        return array_merge($output, ['match' => $result['match'], 'corrected' => $result['corrected'], 'facets' => $result['facets']]);
     }
 
     /**
@@ -111,7 +115,7 @@ class SearchService extends Tags
 
     private function singleAsk(string $query): mixed
     {
-        $result = Search::ask($query, $this->clamp($this->params->int('limit', 10)));
+        $result = Search::ask($query, $this->clamp($this->params->int('limit', 10)), 0, $this->criteria());
 
         if ($result === null) {
             return [];
@@ -124,6 +128,7 @@ class SearchService extends Tags
                 $as => $result['results'],
                 'match' => $result['match'],
                 'corrected' => $result['corrected'],
+                'facets' => $result['facets'],
                 'dropped' => $result['dropped'],
                 'intent' => $result['intent'],
             ],
@@ -135,7 +140,7 @@ class SearchService extends Tags
     {
         $page = LengthAwarePaginator::resolveCurrentPage();
 
-        $result = Search::ask($query, $perPage, ($page - 1) * $perPage);
+        $result = Search::ask($query, $perPage, ($page - 1) * $perPage, $this->criteria());
 
         if ($result === null) {
             return [];
@@ -152,9 +157,23 @@ class SearchService extends Tags
         return array_merge($output, [
             'match' => $result['match'],
             'corrected' => $result['corrected'],
+            'facets' => $result['facets'],
             'dropped' => $result['dropped'],
             'intent' => $result['intent'],
         ]);
+    }
+
+    /**
+     * What this tag was asked to narrow, order and count by.
+     *
+     * Parameters are colon-separated the way Statamic's own tags take query conditions:
+     * filter:colour="blue", filter:colour="blue|grey" for either, filter:price:gte="100"
+     * for one end of a range, sort and direction for the order, and facets="colour|brand"
+     * for what to count.
+     */
+    private function criteria(): Criteria
+    {
+        return Criteria::fromParameters($this->params->all());
     }
 
     /**
