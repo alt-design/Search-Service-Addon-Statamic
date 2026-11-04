@@ -54,7 +54,7 @@ class SearchService extends Tags
         $as = $this->getPaginationResultsKey();
 
         return array_merge(
-            [$as => $result['results'], 'match' => $result['match'], 'corrected' => $result['corrected'], 'facets' => $result['facets']],
+            [$as => $result['results'], 'match' => $result['match'], 'corrected' => $this->safe($result['corrected']), 'facets' => $this->safe($result['facets'])],
             $this->extraOutput($result['results']),
         );
     }
@@ -81,7 +81,7 @@ class SearchService extends Tags
             ['path' => LengthAwarePaginator::resolveCurrentPath()],
         ));
 
-        return array_merge($output, ['match' => $result['match'], 'corrected' => $result['corrected'], 'facets' => $result['facets']]);
+        return array_merge($output, ['match' => $result['match'], 'corrected' => $this->safe($result['corrected']), 'facets' => $this->safe($result['facets'])]);
     }
 
     /**
@@ -136,10 +136,10 @@ class SearchService extends Tags
             [
                 $as => $result['results'],
                 'match' => $result['match'],
-                'corrected' => $result['corrected'],
-                'facets' => $result['facets'],
-                'dropped' => $result['dropped'],
-                'intent' => $result['intent'],
+                'corrected' => $this->safe($result['corrected']),
+                'facets' => $this->safe($result['facets']),
+                'dropped' => $this->safe($result['dropped']),
+                'intent' => $this->safe($result['intent']),
             ],
             $this->conversation($query, $result),
             $this->extraOutput($result['results']),
@@ -166,27 +166,45 @@ class SearchService extends Tags
 
         return array_merge($output, [
             'match' => $result['match'],
-            'corrected' => $result['corrected'],
-            'facets' => $result['facets'],
-            'dropped' => $result['dropped'],
-            'intent' => $result['intent'],
+            'corrected' => $this->safe($result['corrected']),
+            'facets' => $this->safe($result['facets']),
+            'dropped' => $this->safe($result['dropped']),
+            'intent' => $this->safe($result['intent']),
         ], $this->conversation($query, $result));
     }
 
     /**
-     * What this tag was asked to narrow, order and count by.
+     * Every string the service sent, escaped for a template.
      *
-     * Parameters are colon-separated the way Statamic's own tags take query conditions:
-     * filter:colour="blue", filter:colour="blue|grey" for either, filter:price:gte="100"
-     * for one end of a range, sort and direction for the order, and facets="colour|brand"
-     * for what to count.
+     * Antlers does not escape {{ }}, and all of this is the client's own
+     * content arriving over HTTP: a facet name, a value, a corrected spelling.
+     * None of it is ever markup, so escaping costs nothing and leaving it raw
+     * puts a stored script one indexed field away from every search page.
+     *
+     * Array keys are left alone, since those are the names a template looks a
+     * facet up by.
      */
+    private function safe(mixed $value): mixed
+    {
+        if (is_array($value)) {
+            return array_map(fn (mixed $item): mixed => $this->safe($item), $value);
+        }
+
+        return is_string($value) ? e($value) : $value;
+    }
+
     /**
      * What the conversation has settled and what to ask next, each carrying the
      * link that acts on it, so a template writes an href and nothing else.
      *
      * Built from what the service sent back rather than from what arrived, so a
      * pair it discarded leaves the page too.
+     *
+     * Facet names and values are escaped here rather than left to the template.
+     * Antlers does not escape {{ }}, and these are the client's own index
+     * values arriving over HTTP: a value is a label, never markup, so there is
+     * nothing to lose by escaping it and a stored script to gain by not. The
+     * links are built from the raw values and encoded by http_build_query.
      *
      * @param  array{chosen: array<int, array{facet: string, value: string}>, question: array{facet: string, options: array<int, array{value: string, total: int}>}|null}  $result
      * @return array<string, mixed>
@@ -198,19 +216,29 @@ class SearchService extends Tags
 
         return [
             'chosen' => array_map(fn (array $pair): array => [
-                ...$pair,
+                'facet' => e($pair['facet']),
+                'value' => e($pair['value']),
                 'link' => $chosen->without($pair['facet'], $pair['value'])->query($query),
             ], $chosen->toQuery()),
             'question' => $question === null ? null : [
-                'facet' => $question['facet'],
+                'facet' => e($question['facet']),
                 'options' => array_map(fn (array $option): array => [
-                    ...$option,
+                    'value' => e($option['value']),
+                    'total' => (int) $option['total'],
                     'link' => $chosen->with($question['facet'], $option['value'])->query($query),
                 ], $question['options']),
             ],
         ];
     }
 
+    /**
+     * What this tag was asked to narrow, order and count by.
+     *
+     * Parameters are colon-separated the way Statamic's own tags take query conditions:
+     * filter:colour="blue", filter:colour="blue|grey" for either, filter:price:gte="100"
+     * for one end of a range, sort and direction for the order, and facets="colour|brand"
+     * for what to count.
+     */
     private function criteria(): Criteria
     {
         return Criteria::fromParameters($this->params->all());
