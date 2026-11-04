@@ -2,6 +2,7 @@
 
 namespace AltDesign\SearchService\Tags;
 
+use AltDesign\SearchService\Chosen;
 use AltDesign\SearchService\Criteria;
 use AltDesign\SearchService\Search;
 use Statamic\Extensions\Pagination\LengthAwarePaginator;
@@ -53,7 +54,7 @@ class SearchService extends Tags
         $as = $this->getPaginationResultsKey();
 
         return array_merge(
-            [$as => $result['results'], 'match' => $result['match'], 'corrected' => $result['corrected'], 'facets' => $result['facets']],
+            [$as => $result['results'], 'match' => $result['match'], 'corrected' => $this->safe($result['corrected']), 'facets' => $this->safe($result['facets'])],
             $this->extraOutput($result['results']),
         );
     }
@@ -80,7 +81,7 @@ class SearchService extends Tags
             ['path' => LengthAwarePaginator::resolveCurrentPath()],
         ));
 
-        return array_merge($output, ['match' => $result['match'], 'corrected' => $result['corrected'], 'facets' => $result['facets']]);
+        return array_merge($output, ['match' => $result['match'], 'corrected' => $this->safe($result['corrected']), 'facets' => $this->safe($result['facets'])]);
     }
 
     /**
@@ -97,6 +98,13 @@ class SearchService extends Tags
      * not stock red" rather than showing an empty list. {{ dropped }} carries
      * {{ dropped:facet }} and {{ dropped:value }} when nothing satisfied the whole query
      * and one part of it had to be given up to answer at all.
+     *
+     * Several turns make a conversation. {{ question }} is the one thing worth asking
+     * next, with {{ question:facet }} and {{ question:options }}, each option carrying
+     * {{ value }}, {{ total }} and {{ link }}, a query string ready for an href.
+     * {{ chosen }} is what the visitor has settled, each with a {{ link }} that
+     * unsettles it. The state travels in the URL rather than a session, so a narrowed
+     * search can be shared and the back button works.
      */
     public function ask(): mixed
     {
@@ -107,15 +115,16 @@ class SearchService extends Tags
         }
 
         $perPage = $this->clamp($this->params->int('paginate'));
+        $chosen = Chosen::from($this->params->get('chosen', request()->input('chosen')));
 
         return $this->params->has('paginate')
-            ? $this->paginatedAsk($query, $perPage)
-            : $this->singleAsk($query);
+            ? $this->paginatedAsk($query, $perPage, $chosen)
+            : $this->singleAsk($query, $chosen);
     }
 
-    private function singleAsk(string $query): mixed
+    private function singleAsk(string $query, Chosen $chosen): mixed
     {
-        $result = Search::ask($query, $this->clamp($this->params->int('limit', 10)), 0, $this->criteria());
+        $result = Search::ask($query, $this->clamp($this->params->int('limit', 10)), 0, $this->criteria(), $chosen);
 
         if ($result === null) {
             return [];
@@ -127,20 +136,21 @@ class SearchService extends Tags
             [
                 $as => $result['results'],
                 'match' => $result['match'],
-                'corrected' => $result['corrected'],
-                'facets' => $result['facets'],
-                'dropped' => $result['dropped'],
-                'intent' => $result['intent'],
+                'corrected' => $this->safe($result['corrected']),
+                'facets' => $this->safe($result['facets']),
+                'dropped' => $this->safe($result['dropped']),
+                'intent' => $this->safe($result['intent']),
             ],
+            $this->conversation($query, $result),
             $this->extraOutput($result['results']),
         );
     }
 
-    private function paginatedAsk(string $query, int $perPage): mixed
+    private function paginatedAsk(string $query, int $perPage, Chosen $chosen): mixed
     {
         $page = LengthAwarePaginator::resolveCurrentPage();
 
-        $result = Search::ask($query, $perPage, ($page - 1) * $perPage, $this->criteria());
+        $result = Search::ask($query, $perPage, ($page - 1) * $perPage, $this->criteria(), $chosen);
 
         if ($result === null) {
             return [];
@@ -156,11 +166,69 @@ class SearchService extends Tags
 
         return array_merge($output, [
             'match' => $result['match'],
-            'corrected' => $result['corrected'],
-            'facets' => $result['facets'],
-            'dropped' => $result['dropped'],
-            'intent' => $result['intent'],
-        ]);
+            'corrected' => $this->safe($result['corrected']),
+            'facets' => $this->safe($result['facets']),
+            'dropped' => $this->safe($result['dropped']),
+            'intent' => $this->safe($result['intent']),
+        ], $this->conversation($query, $result));
+    }
+
+    /**
+     * Every string the service sent, escaped for a template.
+     *
+     * Antlers does not escape {{ }}, and all of this is the client's own
+     * content arriving over HTTP: a facet name, a value, a corrected spelling.
+     * None of it is ever markup, so escaping costs nothing and leaving it raw
+     * puts a stored script one indexed field away from every search page.
+     *
+     * Array keys are left alone, since those are the names a template looks a
+     * facet up by.
+     */
+    private function safe(mixed $value): mixed
+    {
+        if (is_array($value)) {
+            return array_map(fn (mixed $item): mixed => $this->safe($item), $value);
+        }
+
+        return is_string($value) ? e($value) : $value;
+    }
+
+    /**
+     * What the conversation has settled and what to ask next, each carrying the
+     * link that acts on it, so a template writes an href and nothing else.
+     *
+     * Built from what the service sent back rather than from what arrived, so a
+     * pair it discarded leaves the page too.
+     *
+     * Facet names and values are escaped here rather than left to the template.
+     * Antlers does not escape {{ }}, and these are the client's own index
+     * values arriving over HTTP: a value is a label, never markup, so there is
+     * nothing to lose by escaping it and a stored script to gain by not. The
+     * links are built from the raw values and encoded by http_build_query.
+     *
+     * @param  array{chosen: array<int, array{facet: string, value: string}>, question: array{facet: string, options: array<int, array{value: string, total: int}>}|null}  $result
+     * @return array<string, mixed>
+     */
+    private function conversation(string $query, array $result): array
+    {
+        $chosen = Chosen::from($result['chosen']);
+        $question = $result['question'];
+
+        return [
+            'chosen' => array_map(fn (array $pair): array => [
+                'facet' => e($pair['facet']),
+                'value' => e($pair['value']),
+                'link' => $chosen->without($pair['facet'], $pair['value'])->query($query),
+            ], $chosen->toQuery()),
+            'question' => $question === null ? null : [
+                'facet' => e($question['facet']),
+                'options' => array_map(fn (array $option): array => [
+                    'value' => e($option['value']),
+                    'total' => (int) $option['total'],
+                    'link' => $chosen->with($question['facet'], $option['value'])->query($query),
+                ], $question['options']),
+            ],
+        ];
     }
 
     /**

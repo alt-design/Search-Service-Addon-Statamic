@@ -2,6 +2,7 @@
 
 namespace AltDesign\SearchService\Http\Controllers;
 
+use AltDesign\SearchService\Chosen;
 use AltDesign\SearchService\Criteria;
 use AltDesign\SearchService\Index;
 use AltDesign\SearchService\Search;
@@ -22,12 +23,13 @@ class AskController
             'direction' => ['sometimes', 'in:asc,desc'],
             'facets' => ['sometimes', 'array', 'max:10'],
             'facets.*' => ['string', 'max:64'],
+            'chosen' => ['sometimes', 'string', 'max:1000'],
         ]);
 
         $limit = (int) ($data['limit'] ?? 10);
         $offset = (int) ($data['offset'] ?? 0);
 
-        $result = Search::ask($data['q'], $limit, $offset, Criteria::fromRequest($data, fn (): array => Index::filterableAttributes()));
+        $result = Search::ask($data['q'], $limit, $offset, Criteria::fromRequest($data, fn (): array => Index::filterableAttributes()), Chosen::from($data['chosen'] ?? null));
 
         if ($result === null) {
             return response()->json(['message' => 'Search is unavailable.'], 503);
@@ -43,6 +45,8 @@ class AskController
             'facets' => $result['facets'],
             'dropped' => $result['dropped'],
             'intent' => $result['intent'],
+            'chosen' => $result['chosen'],
+            'question' => $result['question'],
             'results' => $result['results']
                 ->map(fn ($entry) => [
                     'reference' => (string) $entry->id(),

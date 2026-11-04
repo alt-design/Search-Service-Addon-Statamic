@@ -72,6 +72,8 @@ it('returns hydrated results with the intent the service inferred', function () 
                     ['facet' => 'colour', 'value' => 'red'],
                 ],
             ],
+            'chosen' => [],
+            'question' => null,
             'results' => [
                 ['reference' => 'chair', 'score' => 1.84, 'title' => 'Armchairs', 'url' => '/articles/chair', 'collection' => 'articles'],
             ],
