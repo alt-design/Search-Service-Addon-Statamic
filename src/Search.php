@@ -81,9 +81,10 @@ class Search
      *
      * @return array{total: int, results: EntryCollection, match: string, corrected: ?string, facets: array<string, list<array{value: string, total: int}>>, dropped: ?array{facet: string, value: string}, intent: array{source: string, terms: array<int, string>, corrected: ?string, concepts: array<int, array{facet: string, value: string}>, unmatched: array<int, array{facet: string, value: string}>}}|null
      */
-    public static function ask(string $query, int $limit = 10, int $offset = 0, ?Criteria $criteria = null): ?array
+    public static function ask(string $query, int $limit = 10, int $offset = 0, ?Criteria $criteria = null, ?Chosen $chosen = null): ?array
     {
         $criteria ??= Criteria::none();
+        $chosen ??= Chosen::none();
 
         $payload = static::payload(
             static::ASK_CACHE_PREFIX,
@@ -91,7 +92,8 @@ class Search
             $limit,
             $offset,
             $criteria,
-            fn () => static::fetchAsk($query, $limit, $offset, $criteria),
+            fn () => static::fetchAsk($query, $limit, $offset, $criteria, $chosen),
+            $chosen,
         );
 
         if ($payload === null) {
@@ -106,6 +108,8 @@ class Search
             'facets' => $payload['facets'],
             'dropped' => $payload['dropped'],
             'intent' => $payload['intent'],
+            'chosen' => $payload['chosen'] ?? [],
+            'question' => $payload['question'] ?? null,
         ];
     }
 
@@ -117,7 +121,7 @@ class Search
      * @param  callable(): (array{total: int, results: array<int, array{reference: string, score: float}>, match: string, corrected: ?string, facets: array<string, list<array{value: string, total: int}>>}|array{total: int, results: array<int, array{reference: string, score: float}>, match: string, corrected: ?string, facets: array<string, list<array{value: string, total: int}>>, dropped: ?array{facet: string, value: string}, intent: array{source: string, terms: array<int, string>, corrected: ?string, concepts: array<int, array{facet: string, value: string}>, unmatched: array<int, array{facet: string, value: string}>}}|null)  $fetcher
      * @return array{total: int, results: array<int, array{reference: string, score: float}>, match: string, corrected: ?string, facets: array<string, list<array{value: string, total: int}>>}|array{total: int, results: array<int, array{reference: string, score: float}>, match: string, corrected: ?string, facets: array<string, list<array{value: string, total: int}>>, dropped: ?array{facet: string, value: string}, intent: array{source: string, terms: array<int, string>, corrected: ?string, concepts: array<int, array{facet: string, value: string}>, unmatched: array<int, array{facet: string, value: string}>}}|null
      */
-    private static function payload(string $prefix, string $query, int $limit, int $offset, Criteria $criteria, callable $fetcher): ?array
+    private static function payload(string $prefix, string $query, int $limit, int $offset, Criteria $criteria, callable $fetcher, ?Chosen $chosen = null): ?array
     {
         $seconds = (int) config('search-service.search_cache_seconds');
 
@@ -125,7 +129,7 @@ class Search
             return $fetcher();
         }
 
-        $key = static::cacheKey($prefix, $query, $limit, $offset, $criteria);
+        $key = static::cacheKey($prefix, $query, $limit, $offset, $criteria, $chosen);
 
         $payload = Cache::get($key);
 
@@ -176,14 +180,15 @@ class Search
      *
      * @return array{total: int, results: array<int, array{reference: string, score: float}>, match: string, corrected: ?string, facets: array<string, list<array{value: string, total: int}>>, dropped: ?array{facet: string, value: string}, intent: array{source: string, terms: array<int, string>, corrected: ?string, concepts: array<int, array{facet: string, value: string}>, unmatched: array<int, array{facet: string, value: string}>}}|null
      */
-    private static function fetchAsk(string $query, int $limit, int $offset, Criteria $criteria): ?array
+    private static function fetchAsk(string $query, int $limit, int $offset, Criteria $criteria, Chosen $chosen): ?array
     {
-        $response = rescue(fn () => Http::searchService()->post('ask', [
+        $response = rescue(fn () => Http::searchService()->post('ask', array_filter([
             'q' => $query,
             'limit' => $limit,
             'offset' => $offset,
+            'chosen' => $chosen->toQuery(),
             ...$criteria->toQuery(),
-        ]), report: false);
+        ], fn (mixed $value): bool => $value !== [])), report: false);
 
         if ($response?->status() === 403) {
             Log::warning('Search service rejected an ask request: site has not opted in to intent search.');
@@ -209,6 +214,8 @@ class Search
                 'facet' => (string) ($dropped['facet'] ?? ''),
                 'value' => (string) ($dropped['value'] ?? ''),
             ] : null,
+            'chosen' => $response->json('chosen') ?? [],
+            'question' => is_array($question = $response->json('question')) ? $question : null,
             'intent' => [
                 'source' => (string) ($intent['source'] ?? 'fallback'),
                 'terms' => $intent['terms'] ?? [],
@@ -223,9 +230,11 @@ class Search
      * Filters, sorting and facets are part of the key, not a detail of it: a page asking
      * for blue must not be served the cached answer for everything.
      */
-    private static function cacheKey(string $prefix, string $query, int $limit, int $offset, Criteria $criteria): string
+    private static function cacheKey(string $prefix, string $query, int $limit, int $offset, Criteria $criteria, ?Chosen $chosen = null): string
     {
-        return $prefix.'.'.md5($query.'|'.$limit.'|'.$offset.'|'.$criteria->fingerprint());
+        $chosen ??= Chosen::none();
+
+        return $prefix.'.'.md5($query.'|'.$limit.'|'.$offset.'|'.$criteria->fingerprint().'|'.$chosen->fingerprint());
     }
 
     /**

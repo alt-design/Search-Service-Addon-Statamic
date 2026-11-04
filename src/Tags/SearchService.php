@@ -2,6 +2,7 @@
 
 namespace AltDesign\SearchService\Tags;
 
+use AltDesign\SearchService\Chosen;
 use AltDesign\SearchService\Criteria;
 use AltDesign\SearchService\Search;
 use Statamic\Extensions\Pagination\LengthAwarePaginator;
@@ -97,6 +98,13 @@ class SearchService extends Tags
      * not stock red" rather than showing an empty list. {{ dropped }} carries
      * {{ dropped:facet }} and {{ dropped:value }} when nothing satisfied the whole query
      * and one part of it had to be given up to answer at all.
+     *
+     * Several turns make a conversation. {{ question }} is the one thing worth asking
+     * next, with {{ question:facet }} and {{ question:options }}, each option carrying
+     * {{ value }}, {{ total }} and {{ link }}, a query string ready for an href.
+     * {{ chosen }} is what the visitor has settled, each with a {{ link }} that
+     * unsettles it. The state travels in the URL rather than a session, so a narrowed
+     * search can be shared and the back button works.
      */
     public function ask(): mixed
     {
@@ -107,15 +115,16 @@ class SearchService extends Tags
         }
 
         $perPage = $this->clamp($this->params->int('paginate'));
+        $chosen = Chosen::from($this->params->get('chosen', request()->input('chosen')));
 
         return $this->params->has('paginate')
-            ? $this->paginatedAsk($query, $perPage)
-            : $this->singleAsk($query);
+            ? $this->paginatedAsk($query, $perPage, $chosen)
+            : $this->singleAsk($query, $chosen);
     }
 
-    private function singleAsk(string $query): mixed
+    private function singleAsk(string $query, Chosen $chosen): mixed
     {
-        $result = Search::ask($query, $this->clamp($this->params->int('limit', 10)), 0, $this->criteria());
+        $result = Search::ask($query, $this->clamp($this->params->int('limit', 10)), 0, $this->criteria(), $chosen);
 
         if ($result === null) {
             return [];
@@ -132,15 +141,16 @@ class SearchService extends Tags
                 'dropped' => $result['dropped'],
                 'intent' => $result['intent'],
             ],
+            $this->conversation($query, $result),
             $this->extraOutput($result['results']),
         );
     }
 
-    private function paginatedAsk(string $query, int $perPage): mixed
+    private function paginatedAsk(string $query, int $perPage, Chosen $chosen): mixed
     {
         $page = LengthAwarePaginator::resolveCurrentPage();
 
-        $result = Search::ask($query, $perPage, ($page - 1) * $perPage, $this->criteria());
+        $result = Search::ask($query, $perPage, ($page - 1) * $perPage, $this->criteria(), $chosen);
 
         if ($result === null) {
             return [];
@@ -160,7 +170,7 @@ class SearchService extends Tags
             'facets' => $result['facets'],
             'dropped' => $result['dropped'],
             'intent' => $result['intent'],
-        ]);
+        ], $this->conversation($query, $result));
     }
 
     /**
@@ -171,6 +181,36 @@ class SearchService extends Tags
      * for one end of a range, sort and direction for the order, and facets="colour|brand"
      * for what to count.
      */
+    /**
+     * What the conversation has settled and what to ask next, each carrying the
+     * link that acts on it, so a template writes an href and nothing else.
+     *
+     * Built from what the service sent back rather than from what arrived, so a
+     * pair it discarded leaves the page too.
+     *
+     * @param  array{chosen: array<int, array{facet: string, value: string}>, question: array{facet: string, options: array<int, array{value: string, total: int}>}|null}  $result
+     * @return array<string, mixed>
+     */
+    private function conversation(string $query, array $result): array
+    {
+        $chosen = Chosen::from($result['chosen']);
+        $question = $result['question'];
+
+        return [
+            'chosen' => array_map(fn (array $pair): array => [
+                ...$pair,
+                'link' => $chosen->without($pair['facet'], $pair['value'])->query($query),
+            ], $chosen->toQuery()),
+            'question' => $question === null ? null : [
+                'facet' => $question['facet'],
+                'options' => array_map(fn (array $option): array => [
+                    ...$option,
+                    'link' => $chosen->with($question['facet'], $option['value'])->query($query),
+                ], $question['options']),
+            ],
+        ];
+    }
+
     private function criteria(): Criteria
     {
         return Criteria::fromParameters($this->params->all());
