@@ -140,13 +140,13 @@ class Search
         ], fn (mixed $value): bool => $value !== '' && $value !== [])), report: false);
 
         if ($response?->status() === 404) {
-            Log::warning("Search service has no journey called [{$key}] for this site.");
+            Log::warning('Search service has no journey by that key for this site.', ['key' => $key]);
 
             return null;
         }
 
         if ($response?->status() === 403) {
-            Log::warning("Search service will not serve the journey [{$key}]: it is not ready to be used.");
+            Log::warning('Search service will not serve that journey: it is not ready to be used.', ['key' => $key]);
 
             return null;
         }

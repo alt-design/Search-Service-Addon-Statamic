@@ -66,4 +66,22 @@ return [
 
     'search_cache_seconds' => (int) env('SEARCH_SERVICE_SEARCH_CACHE_SECONDS', 60),
 
+    /*
+    |--------------------------------------------------------------------------
+    | Journey Fields
+    |--------------------------------------------------------------------------
+    |
+    | The entry fields the journey endpoint will return alongside a result, so
+    | a page rendering results in JavaScript can show a price or a summary.
+    |
+    | Named here rather than taken from the request. The endpoint is open to
+    | anybody, and an entry can carry fields a template never renders, so a
+    | field the request asks for and this list does not hold is not returned.
+    | The journey tag is unaffected: it hands whole entries to a template the
+    | site's own developer wrote.
+    |
+    */
+
+    'journey_fields' => [],
+
 ];

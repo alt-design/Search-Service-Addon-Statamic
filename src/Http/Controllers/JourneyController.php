@@ -11,8 +11,8 @@ class JourneyController
 {
     /**
      * How many extra fields one request may ask for, which bounds the size of
-     * a response rather than what a page is allowed to know: these are the
-     * site's own entries and it could fetch them anyway.
+     * a response. What a request is allowed to ask for at all is the config
+     * list, not this.
      */
     private const MAX_FIELDS = 8;
 
@@ -82,8 +82,10 @@ class JourneyController
      * a summary, whatever it shows on a card. The tag hands over whole entries
      * and has no such problem, so this is the JSON endpoint catching up.
      *
-     * Named by the caller rather than guessed at here, because what belongs on
-     * a card is a question about that site and not about journeys.
+     * The request names which of them it wants, and the site decides which
+     * fields may be named at all. Without that list a visitor could read any
+     * field on a published entry, including ones no template renders, by
+     * asking for it; what belongs on a card is a question about the site.
      *
      * @return list<string>
      */
@@ -93,7 +95,14 @@ class JourneyController
             return [];
         }
 
+        $allowed = (array) config('search-service.journey_fields', []);
+
+        if ($allowed === []) {
+            return [];
+        }
+
         $named = array_filter(array_map('trim', explode(',', $fields)));
+        $named = array_intersect($named, $allowed);
 
         return array_slice(array_values(array_unique($named)), 0, self::MAX_FIELDS);
     }

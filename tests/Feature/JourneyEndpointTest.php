@@ -93,12 +93,32 @@ it('passes a handoff through', function () {
 });
 
 it('hands over the fields a page asked for alongside each result', function () {
+    config(['search-service.journey_fields' => ['price', 'sku']]);
     serviceTurn();
     Entry::find('sofa')->set('price', 14.6)->set('sku', 'CC-09')->save();
 
     $response = $this->getJson('/!/search-service/journey?key=hire-enquiry&message=anything&fields=price,sku');
 
     expect($response->json('results.0.values'))->toBe(['price' => 14.6, 'sku' => 'CC-09']);
+});
+
+it('will not hand over a field the site has not allowed', function () {
+    config(['search-service.journey_fields' => ['price']]);
+    serviceTurn();
+    Entry::find('sofa')->set('price', 14.6)->set('cost_to_us', 3.2)->save();
+
+    $response = $this->getJson('/!/search-service/journey?key=hire-enquiry&message=anything&fields=price,cost_to_us');
+
+    expect($response->json('results.0.values'))->toBe(['price' => 14.6]);
+});
+
+it('hands over nothing when the site has allowed nothing', function () {
+    serviceTurn();
+    Entry::find('sofa')->set('price', 14.6)->save();
+
+    $response = $this->getJson('/!/search-service/journey?key=hire-enquiry&message=anything&fields=price');
+
+    expect($response->json('results.0.values'))->toBe([]);
 });
 
 it('hands over nothing extra when nothing was asked for', function () {
@@ -110,6 +130,7 @@ it('hands over nothing extra when nothing was asked for', function () {
 });
 
 it('caps how many fields one request can ask for', function () {
+    config(['search-service.journey_fields' => array_map(fn (int $i): string => "field{$i}", range(1, 20))]);
     serviceTurn();
 
     $many = implode(',', array_map(fn (int $i): string => "field{$i}", range(1, 20)));
