@@ -73,6 +73,7 @@ it('sends the state it was given back to the service', function () {
         'node' => 'wedding-hire',
         'answers' => [['facet' => 'range', 'value' => 'Weddings']],
         'wants' => [],
+        'order' => null,
     ]);
 });
 

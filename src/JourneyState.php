@@ -11,13 +11,18 @@ namespace AltDesign\SearchService;
  * mean the service re-reading all of them each turn, so turn five would cost
  * five model calls and five seconds, growing with the conversation.
  *
- * One parameter holds three things: the node, then what has been settled,
- * then the words of the conversation so far. The words are there because most
- * of what somebody says can never be an answer: a catalogue with no material
- * attribute cannot settle "metal", and without somewhere to keep it the next
- * message starts from nothing and the conversation forgets what it was about.
+ * One parameter holds four things: the node, then what has been settled, then
+ * the words of the conversation so far, then how results are to be arranged.
+ * The words are there because most of what somebody says can never be an
+ * answer: a catalogue with no material attribute cannot settle "metal", and
+ * without somewhere to keep it the next message starts from nothing and the
+ * conversation forgets what it was about.
  *
- *     wedding-hire!range:Weddings|colour:gold!metal|chair
+ *     wedding-hire!range:Weddings|colour:gold!metal|chair!price:asc
+ *
+ * Empty sections at the end are left off, so the common case stays short. One
+ * in the middle is not, because position is what says which section is which:
+ * an order with nothing settled is node!!!price:asc.
  *
  * Every part is encoded on the way in, and the query strings come out ready
  * for an href or a hidden input, so a template never encodes anything and
@@ -48,16 +53,18 @@ final readonly class JourneyState
     /**
      * @param  list<array{facet: string, value: string}>  $answers
      * @param  list<string>  $wants
+     * @param  array{name: string, direction: string}|null  $order
      */
     private function __construct(
         public ?string $node,
         public array $answers,
         public array $wants = [],
+        public ?array $order = null,
     ) {}
 
     public static function start(): self
     {
-        return new self(null, [], []);
+        return new self(null, [], [], null);
     }
 
     /**
@@ -74,6 +81,7 @@ final readonly class JourneyState
                 self::text($value['node'] ?? null),
                 self::readPairs($value['answers'] ?? []),
                 self::readWords($value['wants'] ?? []),
+                self::readOrder($value['order'] ?? null),
             );
         }
 
@@ -81,12 +89,13 @@ final readonly class JourneyState
             return self::start();
         }
 
-        $parts = explode(self::NODE, $value, 3);
+        $parts = explode(self::NODE, $value, 4);
 
         return new self(
             self::text(rawurldecode($parts[0])),
             self::readPairs(self::splitPairs($parts[1] ?? '')),
             self::readWords(array_map('rawurldecode', array_filter(explode(self::PAIRS, $parts[2] ?? '')))),
+            self::readOrder(self::splitOrder($parts[3] ?? '')),
         );
     }
 
@@ -98,11 +107,11 @@ final readonly class JourneyState
     /**
      * The state as the service takes it.
      *
-     * @return array{node: string|null, answers: list<array{facet: string, value: string}>, wants: list<string>}
+     * @return array{node: string|null, answers: list<array{facet: string, value: string}>, wants: list<string>, order: array{name: string, direction: string}|null}
      */
     public function toQuery(): array
     {
-        return ['node' => $this->node, 'answers' => $this->answers, 'wants' => $this->wants];
+        return ['node' => $this->node, 'answers' => $this->answers, 'wants' => $this->wants, 'order' => $this->order];
     }
 
     /**
@@ -121,11 +130,17 @@ final readonly class JourneyState
 
         $wants = implode(self::PAIRS, array_map('rawurlencode', $this->wants));
 
-        if ($pairs === '' && $wants === '') {
-            return rawurlencode($this->node);
+        $order = $this->order === null
+            ? ''
+            : rawurlencode($this->order['name']).self::PAIR.rawurlencode($this->order['direction']);
+
+        $sections = [rawurlencode($this->node), $pairs, $wants, $order];
+
+        while (count($sections) > 1 && end($sections) === '') {
+            array_pop($sections);
         }
 
-        return rawurlencode($this->node).self::NODE.$pairs.($wants === '' ? '' : self::NODE.$wants);
+        return implode(self::NODE, $sections);
     }
 
     /**
@@ -151,7 +166,46 @@ final readonly class JourneyState
         return new self($this->node, array_values(array_filter(
             $this->answers,
             fn (array $pair): bool => $pair['facet'] !== $facet || $pair['value'] !== $value,
-        )), $this->wants);
+        )), $this->wants, $this->order);
+    }
+
+    /**
+     * A submitted order, or null when it is not one the service would honour.
+     *
+     * The direction has to be one of two words. The service reads anything
+     * that is not "asc" as descending, so a stray value would quietly reverse
+     * a price list rather than being ignored, and this arrives from a URL.
+     *
+     * @return array{name: string, direction: string}|null
+     */
+    private static function readOrder(mixed $order): ?array
+    {
+        if (! is_array($order)) {
+            return null;
+        }
+
+        $name = self::text($order['name'] ?? null);
+        $direction = self::text($order['direction'] ?? null);
+
+        if ($name === null || ! in_array($direction, ['asc', 'desc'], true)) {
+            return null;
+        }
+
+        return ['name' => $name, 'direction' => $direction];
+    }
+
+    /**
+     * @return array{name: string, direction: string}|null
+     */
+    private static function splitOrder(string $encoded): ?array
+    {
+        $parts = explode(self::PAIR, $encoded, 2);
+
+        if (count($parts) !== 2) {
+            return null;
+        }
+
+        return ['name' => rawurldecode($parts[0]), 'direction' => rawurldecode($parts[1])];
     }
 
     /**

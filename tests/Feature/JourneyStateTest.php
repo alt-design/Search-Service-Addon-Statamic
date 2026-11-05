@@ -65,6 +65,7 @@ it('reads the array shape the service answers with', function () {
         'node' => 'catering',
         'answers' => [['facet' => 'range', 'value' => 'Catering Hire']],
         'wants' => [],
+        'order' => null,
     ]);
 });
 
@@ -138,4 +139,65 @@ it('encodes a value that would otherwise break the parameter', function () {
     $state = JourneyState::from(['node' => 'a', 'answers' => [['facet' => 'colour', 'value' => 'black & white']]]);
 
     expect($state->parameter())->toBe('a!colour:black%20%26%20white');
+});
+
+it('carries the order in the parameter', function () {
+    $state = JourneyState::from([
+        'node' => 'wedding-hire',
+        'answers' => [['facet' => 'range', 'value' => 'Weddings']],
+        'wants' => ['chair'],
+        'order' => ['name' => 'price', 'direction' => 'asc'],
+    ]);
+
+    expect($state->parameter())->toBe('wedding-hire!range:Weddings!chair!price:asc');
+});
+
+it('reads the order back out of the parameter', function () {
+    $state = JourneyState::from('wedding-hire!range:Weddings!chair!price:asc');
+
+    expect($state->order)->toBe(['name' => 'price', 'direction' => 'asc'])
+        ->and($state->wants)->toBe(['chair'])
+        ->and($state->node)->toBe('wedding-hire');
+});
+
+it('keeps the sections in place when an order has nothing settled before it', function () {
+    $state = JourneyState::from([
+        'node' => 'seating',
+        'answers' => [],
+        'wants' => [],
+        'order' => ['name' => 'price', 'direction' => 'desc'],
+    ]);
+
+    expect($state->parameter())->toBe('seating!!!price:desc')
+        ->and(JourneyState::from($state->parameter())->order)->toBe(['name' => 'price', 'direction' => 'desc']);
+});
+
+it('leaves the parameter short when there is no order', function () {
+    $state = JourneyState::from(['node' => 'seating', 'answers' => [], 'wants' => ['chair']]);
+
+    expect($state->parameter())->toBe('seating!!chair');
+});
+
+it('still reads a parameter written before orders travelled in it', function () {
+    $state = JourneyState::from('wedding-hire!range:Weddings!metal|chair');
+
+    expect($state->order)->toBeNull()
+        ->and($state->wants)->toBe(['metal', 'chair'])
+        ->and($state->answers)->toBe([['facet' => 'range', 'value' => 'Weddings']]);
+});
+
+it('drops a direction that is neither asc nor desc rather than reversing a price list', function () {
+    expect(JourneyState::from('seating!!!price:cheapest')->order)->toBeNull()
+        ->and(JourneyState::from(['node' => 'x', 'order' => ['name' => 'price', 'direction' => 'up']])->order)->toBeNull();
+});
+
+it('sends the order to the service with the rest of the state', function () {
+    $state = JourneyState::from('seating!!!price:asc');
+
+    expect($state->toQuery())->toBe([
+        'node' => 'seating',
+        'answers' => [],
+        'wants' => [],
+        'order' => ['name' => 'price', 'direction' => 'asc'],
+    ]);
 });
