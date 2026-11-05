@@ -114,6 +114,74 @@ class Search
     }
 
     /**
+     * One turn of a guided conversation.
+     *
+     * Deliberately not cached, unlike a search. A turn is a reading of what somebody just
+     * typed at the point they typed it, and the state it returns is what the next turn
+     * depends on, so serving a stored one would answer the wrong question convincingly.
+     * The service caches its own reading of a message, which is where the saving belongs.
+     *
+     * Null means the service could not answer. A page should keep the visitor where they
+     * are and say so, rather than treating it as being sent off path: somebody with a
+     * real question told to go and use the contact form, because a rate limit was
+     * reached, is a worse failure than an apology.
+     *
+     * @return array{key: string, name: string, prompt: ?string, node: ?string, state: array{node: ?string, answers: list<array{facet: string, value: string}>}, question: ?array{facet: string, options: array<int, array{value: string, total: int}>}, sorted: ?array{name: string, direction: string}, handoff: ?array{url: ?string, message: ?string}, total: int, facets: array<string, list<array{value: string, total: int}>>, results: EntryCollection}|null
+     */
+    public static function journey(string $key, string $message = '', ?JourneyState $state = null, int $limit = 10): ?array
+    {
+        $state ??= JourneyState::start();
+
+        $response = rescue(fn () => Http::searchService()->post('journey', array_filter([
+            'key' => $key,
+            'message' => $message,
+            'limit' => $limit,
+            'state' => $state->toQuery(),
+        ], fn (mixed $value): bool => $value !== '' && $value !== [])), report: false);
+
+        if ($response?->status() === 404) {
+            Log::warning("Search service has no journey called [{$key}] for this site.");
+
+            return null;
+        }
+
+        if ($response?->status() === 403) {
+            Log::warning("Search service will not serve the journey [{$key}]: it is not ready to be used.");
+
+            return null;
+        }
+
+        if (! $response?->successful()) {
+            return null;
+        }
+
+        $handoff = $response->json('handoff');
+        $prompt = $response->json('prompt');
+        $node = $response->json('node');
+        $sorted = $response->json('sorted');
+
+        return [
+            'key' => (string) $response->json('key', $key),
+            'name' => (string) $response->json('name', ''),
+            'prompt' => $prompt === null ? null : (string) $prompt,
+            'node' => $node === null ? null : (string) $node,
+            'state' => JourneyState::from($response->json('state') ?? [])->toQuery(),
+            'question' => is_array($question = $response->json('question')) ? $question : null,
+            'sorted' => is_array($sorted) ? [
+                'name' => (string) ($sorted['name'] ?? ''),
+                'direction' => (string) ($sorted['direction'] ?? 'asc'),
+            ] : null,
+            'handoff' => is_array($handoff) ? [
+                'url' => isset($handoff['url']) ? (string) $handoff['url'] : null,
+                'message' => isset($handoff['message']) ? (string) $handoff['message'] : null,
+            ] : null,
+            'total' => (int) $response->json('total', 0),
+            'facets' => $response->json('facets') ?? [],
+            'results' => static::hydrate($response->json('results') ?? []),
+        ];
+    }
+
+    /**
      * The service's raw response for this query, limit and offset, cached briefly so a
      * burst of identical requests only reaches the service once. A failed request is
      * never cached, so the next call tries the service again rather than repeating null.
