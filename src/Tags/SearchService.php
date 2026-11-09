@@ -3,6 +3,7 @@
 namespace AltDesign\SearchService\Tags;
 
 use AltDesign\SearchService\Chosen;
+use AltDesign\SearchService\JourneyState;
 use AltDesign\SearchService\Criteria;
 use AltDesign\SearchService\Search;
 use Statamic\Extensions\Pagination\LengthAwarePaginator;
@@ -171,6 +172,101 @@ class SearchService extends Tags
             'dropped' => $this->safe($result['dropped']),
             'intent' => $this->safe($result['intent']),
         ], $this->conversation($query, $result));
+    }
+
+    /**
+     * One turn of a guided conversation, named by the key a client gave it.
+     *
+     * {{ search_service:journey key="hire-enquiry" }}
+     *
+     * The message comes from the request, so the page is a form posting to
+     * itself and the tag needs telling nothing. The state comes back ready for
+     * a hidden input, so the next turn carries on where this one stopped
+     * without a template assembling anything.
+     *
+     * An empty message opens the journey and returns its greeting, which is
+     * also what a visitor arriving on the page for the first time gets.
+     *
+     * "failed" is true when the service could not answer. That is not the same
+     * as being sent off path, and a template should say so and leave the
+     * visitor where they are rather than send them away over a rate limit.
+     */
+    public function journey(): mixed
+    {
+        $key = trim((string) $this->params->get('key'));
+
+        if ($key === '') {
+            return ['failed' => true, 'handoff' => null, 'question' => null, 'results' => []];
+        }
+
+        $state = JourneyState::from($this->params->get('state', request()->input('state')));
+        $message = trim((string) $this->params->get('message', request()->input('message')));
+
+        $turn = Search::journey($key, $message, $state, $this->clamp($this->params->int('limit')));
+
+        if ($turn === null) {
+            return ['failed' => true, 'handoff' => null, 'question' => null, 'results' => []];
+        }
+
+        $next = JourneyState::from($turn['state']);
+
+        return [
+            'failed' => false,
+            'key' => e($turn['key']),
+            'name' => e($turn['name']),
+            'prompt' => $turn['prompt'] === null ? null : e($turn['prompt']),
+            'node' => $turn['node'] === null ? null : e($turn['node']),
+            'message' => e($message),
+            'state' => $next->parameter(),
+            'settled' => $this->settled($next),
+            'question' => $this->asked($turn['question'], $next),
+            'sorted' => $this->safe($turn['sorted']),
+            'handoff' => $this->safe($turn['handoff']),
+            'total' => $turn['total'],
+            'facets' => $this->safe($turn['facets']),
+            'results' => $turn['results'],
+        ];
+    }
+
+    /**
+     * What the visitor has settled, each with the link that unsettles it, so a
+     * wrong turn is one click to undo.
+     *
+     * @return array<int, array{facet: string, value: string, link: string}>
+     */
+    private function settled(JourneyState $state): array
+    {
+        return array_map(fn (array $pair): array => [
+            'facet' => e($pair['facet']),
+            'value' => e($pair['value']),
+            'link' => $state->without($pair['facet'], $pair['value'])->query(''),
+        ], $state->answers);
+    }
+
+    /**
+     * The next question, each option carrying the link that answers it.
+     *
+     * The option is sent as the message, because that is what a visitor typing
+     * the same thing would send: clicking "gold" and typing "gold" take the
+     * same route through the service rather than two that can disagree.
+     *
+     * @param  array{facet: string, options: array<int, array{value: string, total: int}>}|null  $question
+     * @return array<string, mixed>|null
+     */
+    private function asked(?array $question, JourneyState $state): ?array
+    {
+        if ($question === null) {
+            return null;
+        }
+
+        return [
+            'facet' => e($question['facet']),
+            'options' => array_map(fn (array $option): array => [
+                'value' => e($option['value']),
+                'total' => (int) $option['total'],
+                'link' => $state->query((string) $option['value']),
+            ], $question['options']),
+        ];
     }
 
     /**
