@@ -159,6 +159,7 @@ class Search
         $prompt = $response->json('prompt');
         $node = $response->json('node');
         $sorted = $response->json('sorted');
+        $dropped = $response->json('dropped');
 
         return [
             'key' => (string) $response->json('key', $key),
@@ -170,6 +171,13 @@ class Search
             'sorted' => is_array($sorted) ? [
                 'name' => (string) ($sorted['name'] ?? ''),
                 'direction' => (string) ($sorted['direction'] ?? 'asc'),
+            ] : null,
+            // What the service had to give up to answer at all, so a page can
+            // say there is no such thing rather than show the nearest thing
+            // and leave somebody believing they asked for it.
+            'dropped' => is_array($dropped) ? [
+                'facet' => (string) ($dropped['facet'] ?? ''),
+                'value' => (string) ($dropped['value'] ?? ''),
             ] : null,
             'handoff' => is_array($handoff) ? [
                 'url' => isset($handoff['url']) ? (string) $handoff['url'] : null,

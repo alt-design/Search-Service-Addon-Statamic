@@ -58,6 +58,7 @@ class JourneyController
             'state' => JourneyState::from($turn['state'])->parameter(),
             'question' => $turn['question'],
             'sorted' => $turn['sorted'],
+            'dropped' => $turn['dropped'],
             'handoff' => $turn['handoff'],
             'total' => $turn['total'],
             'facets' => $turn['facets'],

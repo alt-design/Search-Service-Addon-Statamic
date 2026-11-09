@@ -21,6 +21,7 @@ function serviceTurn(array $overrides = []): void
         'state' => ['node' => 'wedding-hire', 'answers' => [['facet' => 'range', 'value' => 'Weddings']]],
         'question' => ['facet' => 'colour', 'options' => [['value' => 'gold', 'total' => 4]]],
         'handoff' => null,
+        'dropped' => null,
         'total' => 1,
         'facets' => [],
         'results' => [['reference' => 'sofa', 'score' => 1.0]],
@@ -167,4 +168,19 @@ it('refuses a message longer than anybody types', function () {
 
     $this->getJson('/!/search-service/journey?key=hire-enquiry&message='.str_repeat('a', 501))
         ->assertStatus(422);
+});
+
+it('passes on what the service could not honour', function () {
+    serviceTurn(['dropped' => ['facet' => 'material', 'value' => 'metal']]);
+
+    $this->getJson('/!/search-service/journey?key=hire-enquiry&message=the+folding+ones')
+        ->assertOk()
+        ->assertJson(['dropped' => ['facet' => 'material', 'value' => 'metal']]);
+});
+
+it('says nothing was given up when the service honoured it all', function () {
+    serviceTurn();
+
+    expect($this->getJson('/!/search-service/journey?key=hire-enquiry&message=anything')->json('dropped'))
+        ->toBeNull();
 });
