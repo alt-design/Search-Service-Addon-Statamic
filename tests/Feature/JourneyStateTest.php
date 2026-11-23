@@ -66,6 +66,7 @@ it('reads the array shape the service answers with', function () {
         'answers' => [['facet' => 'range', 'value' => 'Catering Hire']],
         'wants' => [],
         'order' => null,
+        'refused' => [],
     ]);
 });
 
@@ -199,5 +200,26 @@ it('sends the order to the service with the rest of the state', function () {
         'answers' => [],
         'wants' => [],
         'order' => ['name' => 'price', 'direction' => 'asc'],
+        'refused' => [],
     ]);
+});
+
+it('carries what was ruled out through the url', function () {
+    $state = JourneyState::from('wedding-hire!range:Weddings!chair!!material:wood');
+
+    expect($state->refused)->toBe([['facet' => 'material', 'value' => 'wood']])
+        ->and($state->node)->toBe('wedding-hire')
+        ->and($state->wants)->toBe(['chair']);
+});
+
+it('keeps what was ruled out through a round trip', function () {
+    $parameter = 'wedding-hire!range:Weddings!chair!price:asc!material:wood|colour:gold';
+
+    expect(JourneyState::from($parameter)->parameter())->toBe($parameter);
+});
+
+it('keeps what was ruled out when something is unsettled', function () {
+    $state = JourneyState::from('wedding-hire!range:Weddings!!!material:wood');
+
+    expect($state->without('range', 'Weddings')->refused)->toBe([['facet' => 'material', 'value' => 'wood']]);
 });
