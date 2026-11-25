@@ -11,14 +11,19 @@ namespace AltDesign\SearchService;
  * mean the service re-reading all of them each turn, so turn five would cost
  * five model calls and five seconds, growing with the conversation.
  *
- * One parameter holds four things: the node, then what has been settled, then
- * the words of the conversation so far, then how results are to be arranged.
- * The words are there because most of what somebody says can never be an
- * answer: a catalogue with no material attribute cannot settle "metal", and
- * without somewhere to keep it the next message starts from nothing and the
- * conversation forgets what it was about.
+ * One parameter holds five things: the node, then what has been settled, then
+ * the words of the conversation so far, then how results are to be arranged,
+ * then what has been ruled out. The words are there because most of what
+ * somebody says can never be an answer: a catalogue with no material attribute
+ * cannot settle "metal", and without somewhere to keep it the next message
+ * starts from nothing and the conversation forgets what it was about.
  *
- *     wedding-hire!range:Weddings|colour:gold!metal|chair!price:asc
+ *     wedding-hire!range:Weddings|colour:gold!metal|chair!price:asc!material:wood
+ *
+ * A refusal travels because it cannot be read off the words again. Somebody
+ * who said nothing wooden leaves "nothing" and "wooden" in the conversation,
+ * and the words age out oldest first, so "nothing" goes first and the refusal
+ * quietly becomes a request.
  *
  * Empty sections at the end are left off, so the common case stays short. One
  * in the middle is not, because position is what says which section is which:
@@ -54,17 +59,19 @@ final readonly class JourneyState
      * @param  list<array{facet: string, value: string}>  $answers
      * @param  list<string>  $wants
      * @param  array{name: string, direction: string}|null  $order
+     * @param  list<array{facet: string, value: string}>  $refused
      */
     private function __construct(
         public ?string $node,
         public array $answers,
         public array $wants = [],
         public ?array $order = null,
+        public array $refused = [],
     ) {}
 
     public static function start(): self
     {
-        return new self(null, [], [], null);
+        return new self(null, [], [], null, []);
     }
 
     /**
@@ -82,6 +89,7 @@ final readonly class JourneyState
                 self::readPairs($value['answers'] ?? []),
                 self::readWords($value['wants'] ?? []),
                 self::readOrder($value['order'] ?? null),
+                self::readPairs($value['refused'] ?? []),
             );
         }
 
@@ -89,13 +97,14 @@ final readonly class JourneyState
             return self::start();
         }
 
-        $parts = explode(self::NODE, $value, 4);
+        $parts = explode(self::NODE, $value, 5);
 
         return new self(
             self::text(rawurldecode($parts[0])),
             self::readPairs(self::splitPairs($parts[1] ?? '')),
             self::readWords(array_map('rawurldecode', array_filter(explode(self::PAIRS, $parts[2] ?? '')))),
             self::readOrder(self::splitOrder($parts[3] ?? '')),
+            self::readPairs(self::splitPairs($parts[4] ?? '')),
         );
     }
 
@@ -107,11 +116,17 @@ final readonly class JourneyState
     /**
      * The state as the service takes it.
      *
-     * @return array{node: string|null, answers: list<array{facet: string, value: string}>, wants: list<string>, order: array{name: string, direction: string}|null}
+     * @return array{node: string|null, answers: list<array{facet: string, value: string}>, wants: list<string>, order: array{name: string, direction: string}|null, refused: list<array{facet: string, value: string}>}
      */
     public function toQuery(): array
     {
-        return ['node' => $this->node, 'answers' => $this->answers, 'wants' => $this->wants, 'order' => $this->order];
+        return [
+            'node' => $this->node,
+            'answers' => $this->answers,
+            'wants' => $this->wants,
+            'order' => $this->order,
+            'refused' => $this->refused,
+        ];
     }
 
     /**
@@ -123,9 +138,9 @@ final readonly class JourneyState
             return '';
         }
 
-        $pairs = implode(self::PAIRS, array_map(
+        $encode = fn (array $pairs): string => implode(self::PAIRS, array_map(
             fn (array $pair): string => rawurlencode($pair['facet']).self::PAIR.rawurlencode($pair['value']),
-            $this->answers,
+            $pairs,
         ));
 
         $wants = implode(self::PAIRS, array_map('rawurlencode', $this->wants));
@@ -134,7 +149,7 @@ final readonly class JourneyState
             ? ''
             : rawurlencode($this->order['name']).self::PAIR.rawurlencode($this->order['direction']);
 
-        $sections = [rawurlencode($this->node), $pairs, $wants, $order];
+        $sections = [rawurlencode($this->node), $encode($this->answers), $wants, $order, $encode($this->refused)];
 
         while (count($sections) > 1 && end($sections) === '') {
             array_pop($sections);
@@ -166,7 +181,7 @@ final readonly class JourneyState
         return new self($this->node, array_values(array_filter(
             $this->answers,
             fn (array $pair): bool => $pair['facet'] !== $facet || $pair['value'] !== $value,
-        )), $this->wants, $this->order);
+        )), $this->wants, $this->order, $this->refused);
     }
 
     /**

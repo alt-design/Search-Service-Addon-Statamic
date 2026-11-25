@@ -75,6 +75,7 @@ it('sends the state it was given back to the service', function () {
         'answers' => [['facet' => 'range', 'value' => 'Weddings']],
         'wants' => [],
         'order' => null,
+        'refused' => [],
     ]);
 });
 
@@ -183,4 +184,17 @@ it('says nothing was given up when the service honoured it all', function () {
 
     expect($this->getJson('/!/search-service/journey?key=hire-enquiry&message=anything')->json('dropped'))
         ->toBeNull();
+});
+
+it('hands back what the service ruled out, encoded for the next turn', function () {
+    serviceTurn(['state' => [
+        'node' => 'wedding-hire',
+        'answers' => [['facet' => 'range', 'value' => 'Weddings']],
+        'wants' => ['chairs'],
+        'refused' => [['facet' => 'material', 'value' => 'wood']],
+    ]]);
+
+    $this->getJson('/!/search-service/journey?key=hire-enquiry&message=nothing+wooden')
+        ->assertOk()
+        ->assertJson(['state' => 'wedding-hire!range:Weddings!chairs!!material:wood']);
 });
